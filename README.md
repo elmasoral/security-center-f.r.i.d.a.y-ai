@@ -1,6 +1,6 @@
 ﻿# F.R.I.D.A.Y Command Center
 
-**F.R.I.D.A.Y Command Center** is a local Windows desktop AI command interface with a holographic command-center UI, voice interaction, text commands, file analysis, local desktop actions, and optional Security Center integration.
+**F.R.I.D.A.Y Command Center** is a local Windows desktop AI command interface with a holographic command-center UI, Gemini voice interaction, text commands, file analysis, local desktop actions, and optional MEDPOV Security Center integration.
 
 Designed by **MEDPOV**.
 
@@ -10,40 +10,136 @@ F.R.I.D.A.Y is designed to work in parallel with the **MEDPOV Security Center** 
 
 Learn more about MEDPOV Security Center:  
 https://medpov.com/product/medpov-security-center
+
 ---
 
-## 1. What This Application Does
+## Quick Windows Installation
+
+For most Windows users, use this installation method.
+
+Open **PowerShell** and run:
+
+```powershell
+cd C:\
+mkdir MEDPOV
+cd C:\MEDPOV
+git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
+cd security-center-f.r.i.d.a.y-ai
+.\install_friday.bat
+```
+
+The installer will:
+
+| Step | What Happens |
+|---|---|
+| 1 | Creates or uses the local `.venv` Python environment. |
+| 2 | Installs all required Python packages into `.venv`. |
+| 3 | Installs Playwright Chromium. |
+| 4 | Creates local configuration files. |
+| 5 | Creates a desktop shortcut named `FRIDAY AI`. |
+| 6 | Uses `assets/friday.ico` as the shortcut icon when available. |
+
+After setup finishes, start F.R.I.D.A.Y from the desktop shortcut:
+
+```text
+FRIDAY AI
+```
+
+Or start it manually:
+
+```powershell
+.\start_friday.ps1
+```
+
+If PowerShell blocks the script, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_friday.ps1
+```
+
+On first launch, F.R.I.D.A.Y will ask for your Gemini API key inside the interface.  
+The key will be saved automatically to:
+
+```text
+config/api_keys.json
+config/friday_settings.json
+```
+
+Security Center connection is optional and can be configured later from **FRIDAY SETTINGS**.
+
+---
+
+## Important Installation Note
+
+Do **not** run this after creating `.venv`:
+
+```powershell
+python setup.py
+```
+
+This may use the global Python installation instead of the project virtual environment.
+
+Use one of these instead:
+
+```powershell
+.\install_friday.bat
+```
+
+or:
+
+```powershell
+.\.venv\Scripts\python.exe setup.py
+```
+
+The correct setup output should show paths like:
+
+```text
+C:\MEDPOV\security-center-f.r.i.d.a.y-ai\.venv\Scripts\python.exe
+```
+
+If the output shows a path like this:
+
+```text
+C:\Users\YourUser\AppData\Local\Programs\Python\Python312\python.exe
+```
+
+then setup is running outside `.venv`.
+
+---
+
+## What This Application Does
 
 | Area | Description |
 |---|---|
 | Desktop AI Interface | Provides a local Windows command-center UI for F.R.I.D.A.Y. |
 | Voice Mode | Uses Gemini Live API for voice-based interaction. |
-| Text Commands | Supports written commands from the command input area. |
-| File Analysis | Allows supported files/images/documents to be analyzed from the UI. |
+| Text Commands | Supports written commands from the direct command input area. |
+| File Analysis | Allows supported files, images, documents, data files, and code files to be analyzed from the UI. |
 | Local Actions | Can run supported local desktop, browser, file, and system helper actions. |
-| Security Center Integration | Can connect to a remote Security Center installation such as `https://siteadi.com/security-center`. |
+| Security Center Integration | Can connect to a remote MEDPOV Security Center installation such as `https://siteadi.com/security-center`. |
 | Settings Panel | Lets the user update Gemini API, voice profile, Security Center URL, and Security Center API key from the UI. |
+| Desktop Shortcut | Creates a `FRIDAY AI` desktop shortcut for easy launching. |
 
 ---
 
-## 2. Required Software
+## Required Software
 
 Install these before running F.R.I.D.A.Y.
 
 | Requirement | Required | Notes |
 |---|---:|---|
 | Windows 10 / Windows 11 | Yes | Recommended operating system. |
-| Python 3.11+ | Yes | During installation, enable **Add Python to PATH**. Python 3.12 is also supported. |
+| Python 3.11+ | Yes | During installation, enable **Add Python to PATH**. Python 3.12 is supported. |
 | Git for Windows | Yes | Required to clone the repository. |
-| Gemini API Key | Yes | Required for Gemini Live voice/AI mode. |
+| Gemini API Key | Yes | Required for Gemini Live voice and AI mode. |
 | Microphone Access | Yes | Required for voice mode. |
 | Internet Connection | Yes | Required for Gemini API and optional web actions. |
-| Security Center URL/API Key | Optional | Can be configured later from the F.R.I.D.A.Y settings panel. |
-| Visual C++ Build Tools | Optional | Only needed if a Python package fails to install from wheel on a specific PC. |
+| Security Center URL/API Key | Optional | Can be configured later from FRIDAY SETTINGS. |
+| Visual C++ Build Tools | Optional | Only needed if a Python package fails to install from a prebuilt wheel on a specific PC. |
 
 ---
 
-## 3. Recommended Folder Structure
+## Recommended Folder Structure
 
 F.R.I.D.A.Y does **not** need to be installed under WAMP or a web server folder.
 
@@ -53,27 +149,21 @@ Recommended location:
 C:\MEDPOV\security-center-f.r.i.d.a.y-ai
 ```
 
-Example Security Center URL format:
+Recommended desktop shortcut:
 
 ```text
-https://siteadi.com/security-center
+FRIDAY AI
 ```
 
-F.R.I.D.A.Y automatically uses this API path:
+Recommended icon path:
 
 ```text
-/admin/api/remote-access.php
-```
-
-Full endpoint example:
-
-```text
-https://siteadi.com/security-center/admin/api/remote-access.php
+assets\friday.ico
 ```
 
 ---
 
-## 4. Installation with PowerShell
+## Installation with PowerShell
 
 Open **PowerShell** and run the commands below.
 
@@ -92,6 +182,38 @@ git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
 cd security-center-f.r.i.d.a.y-ai
 ```
 
+### Step 3 — Run the installer
+
+```powershell
+.\install_friday.bat
+```
+
+The installer creates `.venv`, installs packages into `.venv`, prepares config files, installs Playwright Chromium, and creates the desktop shortcut.
+
+### Step 4 — Start F.R.I.D.A.Y
+
+Double click the desktop shortcut:
+
+```text
+FRIDAY AI
+```
+
+Or run:
+
+```powershell
+.\start_friday.ps1
+```
+
+If PowerShell blocks the script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_friday.ps1
+```
+
+---
+
+## Clean Reinstall
+
 If the folder already exists and you want a clean reinstall:
 
 ```powershell
@@ -99,156 +221,83 @@ cd C:\MEDPOV
 Remove-Item .\security-center-f.r.i.d.a.y-ai -Recurse -Force
 git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
 cd security-center-f.r.i.d.a.y-ai
+.\install_friday.bat
 ```
 
-### Step 3 — Create a Python virtual environment
+Then start from the desktop shortcut:
 
-```powershell
-python -m venv .venv
-```
-
-### Step 4 — Activate the virtual environment
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks activation, use this one-time bypass command:
-
-```powershell
-powershell -ExecutionPolicy Bypass -NoProfile
-```
-
-Then run again:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-You can also skip activation and run Python directly like this:
-
-```powershell
-.\.venv\Scripts\python.exe --version
-```
-
-### Step 5 — Run setup
-
-```powershell
-python setup.py
-```
-
-During setup, enter your Gemini API key when requested.
-
-### Step 6 — Start F.R.I.D.A.Y
-
-```powershell
-python main.py
-```
-
-If you did not activate the virtual environment, start it like this:
-
-```powershell
-.\.venv\Scripts\python.exe main.py
+```text
+FRIDAY AI
 ```
 
 ---
 
-## 5. Installation with CMD
+## Installation with CMD
 
-Open **Command Prompt (CMD)** and run the commands below.
-
-### Step 1 — Create the MEDPOV folder
+Open **Command Prompt (CMD)** and run:
 
 ```cmd
 cd /d C:\
 mkdir MEDPOV
 cd /d C:\MEDPOV
-```
-
-### Step 2 — Clone the repository
-
-```cmd
 git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
 cd security-center-f.r.i.d.a.y-ai
+install_friday.bat
 ```
 
-If the folder already exists and you want a clean reinstall:
+Start F.R.I.D.A.Y:
 
 ```cmd
-cd /d C:\MEDPOV
-rmdir /s /q security-center-f.r.i.d.a.y-ai
-git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
-cd security-center-f.r.i.d.a.y-ai
-```
-
-### Step 3 — Create a Python virtual environment
-
-```cmd
-python -m venv .venv
-```
-
-### Step 4 — Activate the virtual environment
-
-```cmd
-.venv\Scripts\activate.bat
-```
-
-### Step 5 — Run setup
-
-```cmd
-python setup.py
-```
-
-During setup, enter your Gemini API key when requested.
-
-### Step 6 — Start F.R.I.D.A.Y
-
-```cmd
-python main.py
+start_friday.bat
 ```
 
 ---
 
-## 6. First Launch Configuration
+## Manual Advanced Installation
 
-On first setup, F.R.I.D.A.Y creates local configuration files inside the `config` folder.
+Use this only if you do not want to use `install_friday.bat`.
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+python -m venv .venv
+.\.venv\Scripts\python.exe setup.py
+.\.venv\Scripts\python.exe main.py
+```
+
+Do not use global `python setup.py` unless the virtual environment is activated correctly.
+
+---
+
+## First Launch Configuration
+
+F.R.I.D.A.Y does not ask for the Gemini API key during setup.
+
+On first launch:
+
+1. F.R.I.D.A.Y opens the setup overlay.
+2. Enter your Gemini API key.
+3. Confirm the detected operating system.
+4. Click **ACTIVATE FRIDAY CORE**.
+5. F.R.I.D.A.Y saves the key and starts the local AI command interface.
+
+The API key is saved into both files:
 
 | File | Purpose | Git Status |
 |---|---|---|
-| `config/api_keys.json` | Local Gemini API key and model settings. | Ignored by Git |
-| `config/friday_settings.json` | Local F.R.I.D.A.Y UI/settings preferences. | Ignored by Git |
-| `config/security_center.json` | Local Security Center URL/API key. | Ignored by Git |
+| `config/api_keys.json` | Local Gemini API key and compatibility config. | Ignored by Git |
+| `config/friday_settings.json` | Main FRIDAY settings store. | Ignored by Git |
+| `config/security_center.json` | Optional Security Center URL/API key. | Ignored by Git |
 | `config/friday_wake.json` | Local standby/wake behavior settings. | Ignored by Git |
 | `config/*.example.json` | Safe example configuration files. | Committed to Git |
 
-If setup does not create the files automatically, copy the example files manually:
-
-### PowerShell
-
-```powershell
-Copy-Item .\config\api_keys.example.json .\config\api_keys.json
-Copy-Item .\config\friday_settings.example.json .\config\friday_settings.json
-Copy-Item .\config\security_center.example.json .\config\security_center.json
-Copy-Item .\config\friday_wake.example.json .\config\friday_wake.json
-```
-
-### CMD
-
-```cmd
-copy config\api_keys.example.json config\api_keys.json
-copy config\friday_settings.example.json config\friday_settings.json
-copy config\security_center.example.json config\security_center.json
-copy config\friday_wake.example.json config\friday_wake.json
-```
-
-Then open `config/api_keys.json` and enter your Gemini API key.
-
-Example:
+Expected `config/api_keys.json` shape:
 
 ```json
 {
   "gemini_api_key": "YOUR_GEMINI_API_KEY",
   "google_api_key": "YOUR_GEMINI_API_KEY",
+  "GOOGLE_API_KEY": "YOUR_GEMINI_API_KEY",
+  "os_system": "windows",
   "friday_voice_name": "Aoede",
   "friday_voice_language": "tr-TR",
   "friday_voice_profile": "female_soft",
@@ -257,11 +306,33 @@ Example:
 }
 ```
 
+Expected `config/friday_settings.json` shape:
+
+```json
+{
+  "voice": {
+    "name": "Aoede",
+    "language": "tr-TR",
+    "character_gender": "female"
+  },
+  "security_center": {
+    "base_url": "https://siteadi.com/security-center",
+    "api_url": "https://siteadi.com/security-center/admin/api/remote-access.php",
+    "api_key": "",
+    "timeout": 25
+  },
+  "gemini": {
+    "api_key": "YOUR_GEMINI_API_KEY",
+    "model": "gemini-2.5-flash-native-audio-preview-12-2025"
+  }
+}
+```
+
 ---
 
-## 7. F.R.I.D.A.Y Settings Panel
+## FRIDAY Settings Panel
 
-After the application opens, use the **FRIDAY SETTINGS** panel to update important settings without editing code.
+After the application opens, use **FRIDAY SETTINGS** to update important settings without editing code.
 
 | Setting | Description |
 |---|---|
@@ -272,11 +343,11 @@ After the application opens, use the **FRIDAY SETTINGS** panel to update importa
 | Security Center Base URL | Example: `https://siteadi.com/security-center`. |
 | Security Center API Key | API key generated by the Security Center installation. |
 
-After changing Gemini voice/model/API settings, restart F.R.I.D.A.Y.
+After changing Gemini voice, model, or API settings, restart F.R.I.D.A.Y.
 
 ---
 
-## 8. Security Center Integration
+## Security Center Integration
 
 Security Center integration is optional. F.R.I.D.A.Y can run without it.
 
@@ -295,6 +366,18 @@ https://siteadi.com/security-center
 6. Save settings.
 7. Restart F.R.I.D.A.Y.
 
+F.R.I.D.A.Y automatically uses this API path:
+
+```text
+/admin/api/remote-access.php
+```
+
+Full endpoint example:
+
+```text
+https://siteadi.com/security-center/admin/api/remote-access.php
+```
+
 Supported Security Center actions may include:
 
 | Action | Description |
@@ -310,7 +393,7 @@ Supported Security Center actions may include:
 
 ---
 
-## 9. Voice Profiles
+## Voice Profiles
 
 Example female voice profiles:
 
@@ -339,50 +422,103 @@ Restart F.R.I.D.A.Y after changing the voice profile.
 
 ---
 
-## 10. Updating the Application
+## Updating the Application
 
-### PowerShell
+### Recommended update method
 
 ```powershell
 cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
 git pull
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python setup.py
-python main.py
+.\install_friday.bat
 ```
 
-### CMD
+Then start:
 
-```cmd
-cd /d C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+```powershell
+.\start_friday.ps1
+```
+
+or double click:
+
+```text
+FRIDAY AI
+```
+
+### Manual update method
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
 git pull
-.venv\Scripts\activate.bat
-python -m pip install -r requirements.txt
-python setup.py
-python main.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe setup.py
+.\.venv\Scripts\python.exe main.py
 ```
 
 ---
 
-## 11. Troubleshooting
+## Desktop Shortcut and Icon
+
+The installer creates this shortcut:
+
+```text
+Desktop\FRIDAY AI.lnk
+```
+
+The shortcut starts:
+
+```text
+start_friday.bat
+```
+
+For a custom icon, place the icon here:
+
+```text
+assets\friday.ico
+```
+
+The setup script will use this icon automatically when creating the desktop shortcut.
+
+Recommended icon source file:
+
+```text
+assets\friday.png
+```
+
+Convert it to `.ico` using:
+
+```powershell
+.\.venv\Scripts\python.exe tools\make_friday_icon.py
+```
+
+Then run setup again:
+
+```powershell
+.\.venv\Scripts\python.exe setup.py
+```
+
+---
+
+## Troubleshooting
 
 | Problem | Cause | Solution |
 |---|---|---|
 | `python is not recognized` | Python is not installed or not added to PATH. | Reinstall Python and enable **Add Python to PATH**. |
 | `git is not recognized` | Git is not installed or not added to PATH. | Install Git for Windows and reopen the terminal. |
+| `ModuleNotFoundError: No module named 'sounddevice'` | Packages were installed into global Python instead of `.venv`. | Run `.\.venv\Scripts\python.exe setup.py`. |
 | `destination path already exists` | The clone folder already exists. | Delete the old folder or clone into a different folder name. |
-| PowerShell blocks `.ps1` activation | Windows execution policy. | Use `powershell -ExecutionPolicy Bypass -NoProfile` or run `.venv\Scripts\python.exe` directly. |
+| PowerShell blocks `.ps1` | Windows execution policy. | Use `powershell -ExecutionPolicy Bypass -File .\start_friday.ps1`. |
 | Microphone does not work | Windows microphone permission is disabled. | Enable microphone access from Windows Privacy settings. |
+| Gemini setup appears again | API key is missing in config files. | Enter the key in the first-launch setup overlay or FRIDAY SETTINGS. |
 | Gemini connection error | API key/model is missing or invalid. | Check Gemini API key and model in FRIDAY SETTINGS. |
-| Security Center unauthorized | Security Center API key is missing or invalid. | Update Security Center API key from FRIDAY SETTINGS. |
-| Package installation fails | Missing build tools or old pip. | Run `python -m pip install --upgrade pip`; install Visual C++ Build Tools if required. |
+| Security Center shows offline | Security Center URL/API key is missing or still using placeholder values. | Configure Security Center from FRIDAY SETTINGS. |
+| Package installation fails | Missing build tools or old pip. | Run `.\.venv\Scripts\python.exe -m pip install --upgrade pip`; install Visual C++ Build Tools if required. |
+| Desktop icon looks generic | `assets/friday.ico` is missing. | Add `assets/friday.png`, run `tools\make_friday_icon.py`, then run setup again. |
 
 ---
 
-## 12. Git Safety Notes for Developers
+## Git Safety Notes for Developers
 
-Do **not** commit these files:
+Do **not** commit these runtime/private files:
 
 ```text
 config/api_keys.json
@@ -396,7 +532,7 @@ __pycache__/
 *.pyc
 ```
 
-Only commit the safe example config files:
+Only commit safe example config files:
 
 ```text
 config/api_keys.example.json
@@ -405,17 +541,25 @@ config/security_center.example.json
 config/friday_wake.example.json
 ```
 
+Commit the desktop icon assets:
+
+```text
+assets/friday.png
+assets/friday.ico
+```
+
 ---
 
-## 13. Project Structure
+## Project Structure
 
 ```text
 actions/        Local command/action modules
 agent/          Agent planning and execution logic
+assets/         Desktop icon and visual assets
 config/         Local config examples and runtime config files
 core/           Prompt and core assistant instructions
 memory/         Local runtime memory, ignored by Git
-tools/          Settings, Security Center client, and helper tools
+tools/          Settings, Security Center client, icon helper, and helper tools
 main.py         Main application entry point
 ui.py           PyQt6 desktop interface
 setup.py        Installation and first-run setup helper
@@ -425,37 +569,9 @@ README.md
 
 ---
 
-## 14. Credits
+## Credits
 
 F.R.I.D.A.Y Command Center was designed by **MEDPOV**.
 
-
-
-## Quick Start for Windows Users
-
-After cloning or downloading the repository, open the project folder and run:
-
-### Option 1: Double click
-
-1. Double click `install_friday.bat`
-2. Enter your Gemini API key when asked
-3. Double click `start_friday.bat`
-
-### Option 2: PowerShell
-
-```powershell
-.\install_friday.ps1
-.\start_friday.ps1
-```
-
-If PowerShell blocks the script, run:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-Or run it once with bypass:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_friday.ps1
-```
+MEDPOV Security Center product page:  
+https://medpov.com/product/medpov-security-center

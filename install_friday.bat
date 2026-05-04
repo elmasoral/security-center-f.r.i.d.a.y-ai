@@ -74,7 +74,10 @@ if %errorlevel% neq 0 (
 echo.
 echo [4/4] Kurulum tamamlandi.
 echo.
-echo F.R.I.D.A.Y'i baslatmak icin:
+echo Masaustune FRIDAY AI kisayolu eklendi.
+echo Gemini API key ilk acilista FRIDAY arayuzunden istenecek.
+echo.
+echo Baslatmak icin:
 echo start_friday.bat
 echo.
 pause

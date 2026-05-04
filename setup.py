@@ -133,18 +133,22 @@ def ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def create_desktop_shortcut() -> None:
     if os.name != "nt":
         return
 
     target = ROOT / "start_friday.bat"
+
     if not target.exists():
         print("Desktop shortcut skipped: start_friday.bat not found.")
         return
 
     icon_candidates = [
         ROOT / "assets" / "friday.ico",
-        ROOT / "public" / "friday.ico",
         ROOT / "friday.ico",
     ]
 
@@ -159,13 +163,17 @@ def create_desktop_shortcut() -> None:
     ps = f"""
 $Desktop = [Environment]::GetFolderPath('Desktop')
 $ShortcutPath = Join-Path $Desktop 'FRIDAY AI.lnk'
+
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+
 $Shortcut.TargetPath = {ps_quote(str(target))}
 $Shortcut.WorkingDirectory = {ps_quote(str(ROOT))}
 $Shortcut.Description = 'MEDPOV F.R.I.D.A.Y AI Command Center'
 $Shortcut.IconLocation = {ps_quote(icon_location)}
+
 $Shortcut.Save()
+
 Write-Host "Desktop shortcut created: $ShortcutPath"
 """
 
@@ -176,7 +184,6 @@ Write-Host "Desktop shortcut created: $ShortcutPath"
         )
     except Exception as exc:
         print(f"Desktop shortcut skipped: {exc}")
-
 
 def main() -> int:
     print("Installing Python requirements...")
