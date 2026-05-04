@@ -26,6 +26,12 @@ try:
     _MSS = True
 except ImportError:
     _MSS = False
+    
+try:
+    from tools.friday_settings_store import get_friday_voice_name
+except Exception:
+    def get_friday_voice_name() -> str:
+        return "Aoede"    
 
 try:
     import PIL.Image
@@ -261,7 +267,7 @@ class _VisionSession:
             speech_config=gtypes.SpeechConfig(
                 voice_config=gtypes.VoiceConfig(
                     prebuilt_voice_config=gtypes.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name=get_friday_voice_name()
                     )
                 )
             ),
@@ -337,7 +343,7 @@ class _VisionSession:
                     if transcript and self._player:
                         full = re.sub(r"\s+", " ", " ".join(transcript)).strip()
                         if full:
-                            self._player.write_log(f"Jarvis: {full}")
+                            self._player.write_log(f"FRIDAY: {full}")
                             print(f"[Vision] 💬 {full}")
                     transcript = []
 

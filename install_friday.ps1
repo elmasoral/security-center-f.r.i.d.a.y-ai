@@ -46,7 +46,11 @@ Write-Host "[2/4] Sanal ortam kontrol ediliyor..."
 
 if (!(Test-Path ".venv\Scripts\python.exe")) {
     Write-Host ".venv olusturuluyor..."
-    & $pythonCmd[0] $pythonCmd[1..($pythonCmd.Length - 1)] -m venv .venv
+    if ($pythonCmd.Length -gt 1) {
+		& $pythonCmd[0] $pythonCmd[1..($pythonCmd.Length - 1)] -m venv .venv
+	} else {
+		& $pythonCmd[0] -m venv .venv
+	}
 
     if (!(Test-Path ".venv\Scripts\python.exe")) {
         Write-Host "[ERROR] .venv olusturulamadi." -ForegroundColor Red

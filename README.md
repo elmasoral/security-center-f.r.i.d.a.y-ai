@@ -446,3 +446,16 @@ After cloning or downloading the repository, open the project folder and run:
 ```powershell
 .\install_friday.ps1
 .\start_friday.ps1
+```
+
+If PowerShell blocks the script, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Or run it once with bypass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_friday.ps1
+```

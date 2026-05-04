@@ -75,11 +75,27 @@ def configure() -> None:
     api.setdefault("gemini_live_model", "gemini-2.5-flash-native-audio-preview-12-2025")
     write_json(API_KEYS, api)
 
-    settings.setdefault("voice_name", api.get("friday_voice_name", "Aoede"))
-    settings.setdefault("voice_language", api.get("friday_voice_language", "tr-TR"))
-    settings.setdefault("gemini_model", api.get("gemini_live_model", "gemini-2.5-flash-native-audio-preview-12-2025"))
-    settings.setdefault("security_center_base_url", "https://siteadi.com/security-center")
-    settings.setdefault("security_center_api_key", "")
+    settings.setdefault("voice", {})
+    settings["voice"].setdefault("name", api.get("friday_voice_name", "Aoede"))
+    settings["voice"].setdefault("language", api.get("friday_voice_language", "tr-TR"))
+    settings["voice"].setdefault("character_gender", api.get("friday_character_gender", "female"))
+
+    settings.setdefault("gemini", {})
+    settings["gemini"].setdefault("api_key", api.get("gemini_api_key", ""))
+    settings["gemini"].setdefault(
+        "model",
+        api.get("gemini_live_model", "gemini-2.5-flash-native-audio-preview-12-2025")
+    )
+
+    settings.setdefault("security_center", {})
+    settings["security_center"].setdefault("base_url", "https://siteadi.com/security-center")
+    settings["security_center"].setdefault(
+        "api_url",
+        "https://siteadi.com/security-center/admin/api/remote-access.php"
+    )
+    settings["security_center"].setdefault("api_key", "")
+    settings["security_center"].setdefault("timeout", 25)
+
     write_json(FRIDAY_SETTINGS, settings)
 
     print("\nConfiguration files created.")
