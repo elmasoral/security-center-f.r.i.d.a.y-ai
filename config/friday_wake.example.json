@@ -1,0 +1,6 @@
+﻿{
+  "enabled": true,
+  "standby_default": true,
+  "wake_words": ["hey friday", "hey medpov"],
+  "double_clap_enabled": true
+}

@@ -1,0 +1,55 @@
+﻿# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configs / secrets
+config/api_keys.json
+config/friday_settings.json
+config/security_center.json
+config/friday_wake.json
+
+# Runtime data
+memory/*.json
+logs/
+*.log
+
+# Local backups / patch leftovers
+*.before_*
+*.backup
+*.disabled_*
+*.rollback_current_*
+*.female_voice_backup
+*.sc_backup
+*.medpov_backup
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.env
+.env.*
+config.php
+storage/logs/
+storage/cache/
+storage/database/
+cache/
+tmp/
+vendor/
+node_modules/
+*.sqlite
+*.db
+database/*.sqlite
+database/*.db
+public/uploads/
+uploads/
+*.zip
+*.rar
+*.7z

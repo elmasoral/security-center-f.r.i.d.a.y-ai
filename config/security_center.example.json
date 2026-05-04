@@ -1,0 +1,5 @@
+﻿{
+  "base_url": "https://siteadi.com/security-center",
+  "api_key": "",
+  "endpoint": "/admin/api/remote-access.php"
+}

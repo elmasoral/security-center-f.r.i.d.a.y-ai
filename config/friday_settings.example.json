@@ -1,0 +1,7 @@
+﻿{
+  "voice_name": "Aoede",
+  "voice_language": "tr-TR",
+  "gemini_model": "gemini-2.5-flash-native-audio-preview-12-2025",
+  "security_center_base_url": "https://siteadi.com/security-center",
+  "security_center_api_key": ""
+}

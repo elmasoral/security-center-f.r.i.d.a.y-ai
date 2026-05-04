@@ -1,0 +1,9 @@
+﻿{
+  "gemini_api_key": "",
+  "google_api_key": "",
+  "friday_voice_name": "Aoede",
+  "friday_voice_language": "tr-TR",
+  "friday_voice_profile": "female_soft",
+  "friday_character_gender": "female",
+  "gemini_live_model": "gemini-2.5-flash-native-audio-preview-12-2025"
+}
