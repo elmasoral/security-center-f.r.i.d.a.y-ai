@@ -19,6 +19,15 @@ from pathlib import Path
 
 import psutil
 
+try:
+    from tools.friday_settings_store import (
+        save_gemini_api_key_everywhere,
+        bootstrap_environment,
+    )
+except Exception:
+    save_gemini_api_key_everywhere = None
+    bootstrap_environment = None
+
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
     QTimer, QUrl, pyqtSignal,
@@ -2145,17 +2154,101 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _on_setup_done(self, key: str, os_name: str):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
-        self._ready = True
-        if self._overlay:
-            self._overlay.hide()
-            self._overlay = None
-        self._apply_state("LISTENING")
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. FRIDAY online.")
+        key = str(key or "").strip()
+        os_name = str(os_name or "windows").strip().lower()
+
+        if not key:
+            self._log.append_log("ERR: Gemini API key is required.")
+            return
+
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+
+            # Ana kayıt noktası: helper varsa iki JSON'u da günceller.
+            if save_gemini_api_key_everywhere is not None:
+                save_gemini_api_key_everywhere(key, os_name)
+            else:
+                # Güvenli fallback: helper yüklenemezse yine de iki config dosyasını elle güncelle.
+                api_data = {}
+                if API_FILE.exists():
+                    try:
+                        api_data = json.loads(API_FILE.read_text(encoding="utf-8") or "{}")
+                        if not isinstance(api_data, dict):
+                            api_data = {}
+                    except Exception:
+                        api_data = {}
+
+                api_data["gemini_api_key"] = key
+                api_data["google_api_key"] = key
+                api_data["GOOGLE_API_KEY"] = key
+                api_data["os_system"] = os_name
+                api_data.setdefault("friday_voice_name", "Aoede")
+                api_data.setdefault("friday_voice_language", "tr-TR")
+                api_data.setdefault("friday_voice_profile", "female_soft")
+                api_data.setdefault("friday_character_gender", "female")
+                api_data.setdefault(
+                    "gemini_live_model",
+                    "gemini-2.5-flash-native-audio-preview-12-2025"
+                )
+
+                API_FILE.write_text(
+                    json.dumps(api_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+                settings_file = CONFIG_DIR / "friday_settings.json"
+                settings_data = {}
+                if settings_file.exists():
+                    try:
+                        settings_data = json.loads(settings_file.read_text(encoding="utf-8") or "{}")
+                        if not isinstance(settings_data, dict):
+                            settings_data = {}
+                    except Exception:
+                        settings_data = {}
+
+                settings_data.setdefault("voice", {})
+                settings_data["voice"].setdefault("name", "Aoede")
+                settings_data["voice"].setdefault("language", "tr-TR")
+                settings_data["voice"].setdefault("character_gender", "female")
+
+                settings_data.setdefault("gemini", {})
+                settings_data["gemini"]["api_key"] = key
+                settings_data["gemini"].setdefault(
+                    "model",
+                    "gemini-2.5-flash-native-audio-preview-12-2025"
+                )
+
+                settings_data.setdefault("security_center", {})
+                settings_data["security_center"].setdefault(
+                    "base_url",
+                    "https://siteadi.com/security-center"
+                )
+                settings_data["security_center"].setdefault(
+                    "api_url",
+                    "https://siteadi.com/security-center/admin/api/remote-access.php"
+                )
+                settings_data["security_center"].setdefault("api_key", "")
+                settings_data["security_center"].setdefault("timeout", 25)
+
+                settings_file.write_text(
+                    json.dumps(settings_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+            if bootstrap_environment is not None:
+                bootstrap_environment()
+
+            self._ready = True
+
+            if self._overlay:
+                self._overlay.hide()
+                self._overlay = None
+
+            self._apply_state("LISTENING")
+            self._log.append_log(f"SYS: Gemini API key saved. OS={os_name.upper()}. FRIDAY online.")
+
+        except Exception as exc:
+            self._log.append_log(f"ERR: Gemini API key save failed — {exc}")
 
 class _RootShim:
     def __init__(self, app: QApplication):

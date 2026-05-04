@@ -216,3 +216,33 @@ def bootstrap_environment() -> Dict[str, Any]:
     return settings
 
 
+def save_gemini_api_key_everywhere(api_key: str, os_system: str = "windows") -> Dict[str, Any]:
+    key = str(api_key or "").strip()
+    if not key:
+        raise ValueError("Gemini API key is empty.")
+
+    settings = load_settings()
+    settings.setdefault("gemini", {})
+    settings["gemini"]["api_key"] = key
+    settings["gemini"].setdefault("model", DEFAULT_GEMINI_MODEL)
+
+    saved = save_settings(settings)
+
+    api = _read_json(API_KEYS_PATH)
+    api["gemini_api_key"] = key
+    api["google_api_key"] = key
+    api["GOOGLE_API_KEY"] = key
+    api.setdefault("friday_voice_name", get_friday_voice_name())
+    api.setdefault("friday_voice_language", get_friday_voice_language())
+    api.setdefault("friday_voice_profile", "female_soft")
+    api.setdefault("friday_character_gender", "female")
+    api.setdefault("gemini_live_model", get_gemini_model())
+    api["os_system"] = os_system or api.get("os_system", "windows")
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    API_KEYS_PATH.write_text(json.dumps(api, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    os.environ["GEMINI_API_KEY"] = key
+    os.environ["GOOGLE_API_KEY"] = key
+
+    return saved
