@@ -6,6 +6,10 @@ Designed by **MEDPOV**.
 
 > F.R.I.D.A.Y runs on the user’s own Windows computer. WAMP is **not required**. The recommended installation path is `C:\MEDPOV\security-center-f.r.i.d.a.y-ai`.
 
+F.R.I.D.A.Y is designed to work in parallel with the **MEDPOV Security Center** software. When connected to a Security Center installation, it can help monitor security events, review threat summaries, analyze suspicious IP addresses, and provide voice or text-based operational assistance from the local desktop interface.
+
+Learn more about MEDPOV Security Center:  
+https://medpov.com/product/medpov-security-center
 ---
 
 ## 1. What This Application Does
