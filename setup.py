@@ -186,6 +186,12 @@ Write-Host "Desktop shortcut created: $ShortcutPath"
         print(f"Desktop shortcut skipped: {exc}")
 
 def main() -> int:
+    if sys.version_info < (3, 11) or sys.version_info >= (3, 13):
+        print("[ERROR] Unsupported Python version.")
+        print(f"Detected: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+        print("Please use Python 3.11 or Python 3.12 for F.R.I.D.A.Y.")
+        print("Python 3.13+ may force packages like numpy to build from source.")
+        return 1    
     print("Installing Python requirements...")
     run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
     run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
