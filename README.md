@@ -40,7 +40,7 @@ https://siteadi.com/security-center
 Clone the repository:
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+git clone https://github.com/elmasoral/security-center-f.r.i.d.a.y-ai.git
 cd YOUR_REPOSITORY
 ```
 
