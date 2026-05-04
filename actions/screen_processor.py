@@ -82,12 +82,10 @@ _IMG_MAX_H = 360
 _JPEG_Q    = 60
 
 _SYSTEM_PROMPT = (
-    "You are JARVIS, an advanced AI assistant. "
+    "You are F.R.I.D.A.Y, MEDPOV's private desktop AI assistant. "
     "Analyze the provided image with precision and intelligence. "
-    "Be concise and direct — maximum two sentences unless the user's question "
-    "requires more detail. "
-    "Address the user respectfully. "
-    "Always call the appropriate tool; never simulate results."
+    "Be concise and direct. "
+    "Use the user's language when possible."
 )
 
 

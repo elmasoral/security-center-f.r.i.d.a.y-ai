@@ -429,3 +429,20 @@ README.md
 
 F.R.I.D.A.Y Command Center was designed by **MEDPOV**.
 
+
+
+## Quick Start for Windows Users
+
+After cloning or downloading the repository, open the project folder and run:
+
+### Option 1: Double click
+
+1. Double click `install_friday.bat`
+2. Enter your Gemini API key when asked
+3. Double click `start_friday.bat`
+
+### Option 2: PowerShell
+
+```powershell
+.\install_friday.ps1
+.\start_friday.ps1

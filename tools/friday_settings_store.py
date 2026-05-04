@@ -19,19 +19,19 @@ DEFAULT_VOICE = "Aoede"
 DEFAULT_LANGUAGE = "tr-TR"
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
-    {"name": "Aoede", "group": "KadÄ±n", "label": "Aoede Â· KadÄ±n / soft"},
-    {"name": "Leda", "group": "KadÄ±n", "label": "Leda Â· KadÄ±n / net"},
-    {"name": "Kore", "group": "KadÄ±n", "label": "Kore Â· KadÄ±n / dengeli"},
-    {"name": "Zephyr", "group": "KadÄ±n", "label": "Zephyr Â· KadÄ±n / hafif"},
-    {"name": "Callirrhoe", "group": "KadÄ±n", "label": "Callirrhoe Â· KadÄ±n / premium"},
-    {"name": "Autonoe", "group": "KadÄ±n", "label": "Autonoe Â· KadÄ±n / sakin"},
-    {"name": "Puck", "group": "Erkek", "label": "Puck Â· Erkek / enerjik"},
-    {"name": "Charon", "group": "Erkek", "label": "Charon Â· Erkek / tok"},
-    {"name": "Fenrir", "group": "Erkek", "label": "Fenrir Â· Erkek / gÃ¼Ã§lÃ¼"},
-    {"name": "Orus", "group": "Erkek", "label": "Orus Â· Erkek / profesyonel"},
-    {"name": "Iapetus", "group": "Erkek", "label": "Iapetus Â· Erkek / derin"},
-    {"name": "Umbriel", "group": "Erkek", "label": "Umbriel Â· Erkek / ciddi"},
-    {"name": "Algieba", "group": "Erkek", "label": "Algieba Â· Erkek / dengeli"},
+    {"name": "Aoede", "group": "Kadın", "label": "Aoede · Kadın / soft"},
+    {"name": "Leda", "group": "Kadın", "label": "Leda · Kadın / net"},
+    {"name": "Kore", "group": "Kadın", "label": "Kore · Kadın / dengeli"},
+    {"name": "Zephyr", "group": "Kadın", "label": "Zephyr · Kadın / hafif"},
+    {"name": "Callirrhoe", "group": "Kadın", "label": "Callirrhoe · Kadın / premium"},
+    {"name": "Autonoe", "group": "Kadın", "label": "Autonoe · Kadın / sakin"},
+    {"name": "Puck", "group": "Erkek", "label": "Puck · Erkek / enerjik"},
+    {"name": "Charon", "group": "Erkek", "label": "Charon · Erkek / tok"},
+    {"name": "Fenrir", "group": "Erkek", "label": "Fenrir · Erkek / güçlü"},
+    {"name": "Orus", "group": "Erkek", "label": "Orus · Erkek / profesyonel"},
+    {"name": "Iapetus", "group": "Erkek", "label": "Iapetus · Erkek / derin"},
+    {"name": "Umbriel", "group": "Erkek", "label": "Umbriel · Erkek / ciddi"},
+    {"name": "Algieba", "group": "Erkek", "label": "Algieba · Erkek / dengeli"},
 ]
 
 DEFAULTS: Dict[str, Any] = {
