@@ -512,6 +512,7 @@ class HudCanvas(QWidget):
         self._camera_lock = threading.Lock()
         self._camera_snapshot_bytes: bytes | None = None
         self._camera_snapshot_mime = "image/jpeg"
+        self._camera_last_snapshot_ts = 0.0
 
         self._tick = 0
         self._rot_outer = 0.0
@@ -1007,6 +1008,16 @@ class HudCanvas(QWidget):
         self._camera_index = self._preferred_camera_index() if camera_index is None else int(camera_index)
         with self._camera_lock:
             self._camera_snapshot_bytes = None
+        self._camera_last_snapshot_ts = 0.0
+        self._camera_frame = None
+
+        # Show the camera HUD immediately, before the webcam driver finishes opening.
+        # This prevents the UI from looking frozen on slower Windows camera drivers.
+        self.update()
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
 
         if cv2 is None:
             self._camera_error = "opencv-python yüklü değil"
@@ -1021,7 +1032,30 @@ class HudCanvas(QWidget):
                 return True
 
             self.stop_camera_capture_only()
-            self._camera = cv2.VideoCapture(self._camera_index, self._preferred_camera_backend())
+
+            backends = []
+            preferred = self._preferred_camera_backend()
+            if preferred:
+                backends.append(preferred)
+            if cv2 is not None:
+                for candidate in (getattr(cv2, "CAP_MSMF", 0), getattr(cv2, "CAP_DSHOW", 0), getattr(cv2, "CAP_ANY", 0), 0):
+                    if candidate not in backends:
+                        backends.append(candidate)
+
+            self._camera = None
+            for backend in backends or [0]:
+                try:
+                    cam = cv2.VideoCapture(self._camera_index, backend) if backend else cv2.VideoCapture(self._camera_index)
+                    if cam is not None and cam.isOpened():
+                        self._camera = cam
+                        break
+                    try:
+                        if cam is not None:
+                            cam.release()
+                    except Exception:
+                        pass
+                except Exception:
+                    continue
 
             if not self._camera or not self._camera.isOpened():
                 self._camera_error = f"Kamera açılamadı: index {self._camera_index}"
@@ -1030,9 +1064,11 @@ class HudCanvas(QWidget):
                 return False
 
             try:
-                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
-                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
-                self._camera.set(cv2.CAP_PROP_FPS, 30)
+                # Lower live HUD resolution keeps FRIDAY responsive while still giving
+                # a clean preview and enough data for vision snapshots.
+                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                self._camera.set(cv2.CAP_PROP_FPS, 15)
                 self._camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
                 pass
@@ -1041,9 +1077,10 @@ class HudCanvas(QWidget):
             # Bunu timer'a bırakınca bazen ilk 1 saniyede snapshot gelmiyor ve
             # screen_processor aynı kamerayı ikinci kez açmaya çalışıyordu. Bu da
             # bazı Windows webcam sürücülerinde uygulamayı tamamen kapatabiliyor.
-            self._prime_camera_snapshot(max_reads=10)
+            self._prime_camera_snapshot(max_reads=4)
 
-            self._camera_timer.start(30)
+            # 15 FPS is much lighter than 30 FPS and removes the visible slow-down.
+            self._camera_timer.start(66)
             self.update()
             return True
 
@@ -1070,6 +1107,7 @@ class HudCanvas(QWidget):
         self._camera_frame = None
         with self._camera_lock:
             self._camera_snapshot_bytes = None
+        self._camera_last_snapshot_ts = 0.0
 
     def stop_camera_mode(self):
         self.stop_camera_capture_only()
@@ -1098,11 +1136,19 @@ class HudCanvas(QWidget):
             ).copy()
 
             # Vision modülü ayrı kamera açmaya çalışmasın diye JPEG snapshot sakla.
-            if force_snapshot or (self._tick % 3 == 0) or self._camera_snapshot_bytes is None:
-                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            # JPEG encode pahalı olduğu için canlı HUD'da sürekli değil, aralıklı yapılır.
+            now = time.time()
+            should_snapshot = (
+                force_snapshot
+                or self._camera_snapshot_bytes is None
+                or (now - float(getattr(self, "_camera_last_snapshot_ts", 0.0) or 0.0)) >= 0.85
+            )
+            if should_snapshot:
+                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 58])
                 if ok_jpg:
                     with self._camera_lock:
                         self._camera_snapshot_bytes = jpg.tobytes()
+                    self._camera_last_snapshot_ts = now
 
             self._camera_error = ""
             return True
@@ -1123,7 +1169,7 @@ class HudCanvas(QWidget):
             except Exception as exc:
                 self._camera_error = str(exc)
                 return False
-            time.sleep(0.025)
+            time.sleep(0.012)
         return False
 
     def _camera_tick(self):
@@ -2687,6 +2733,8 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
+        lay.addWidget(self._build_left_quick_access_panel())
+
         pills = QHBoxLayout(); pills.setSpacing(8)
         for txt, col in [("●  FRIDAY ONLINE", C.GREEN), ("◇  MEDPOV SECURE", C.PRI), ("◎  AI CORE READY", C.TEXT_MED)]:
             lbl = QLabel(txt)
@@ -2700,6 +2748,92 @@ class MainWindow(QMainWindow):
         lay.addLayout(pills)
 
         return w
+
+    def _build_left_quick_access_panel(self) -> QWidget:
+        """Bottom-left map/camera quick launcher. No duplicate buttons in map/camera HUD."""
+        box = QFrame()
+        box.setObjectName("LeftQuickAccessPanel")
+        box.setStyleSheet(f"""
+            QFrame#LeftQuickAccessPanel {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                    stop:0 rgba(7, 24, 38, 0.94),
+                    stop:0.55 rgba(3, 12, 22, 0.98),
+                    stop:1 rgba(2, 8, 16, 0.98));
+                border: 1px solid rgba(40, 233, 255, 0.30);
+                border-radius: 16px;
+            }}
+            QFrame#LeftQuickAccessPanel QLabel {{
+                background: transparent;
+                border: none;
+            }}
+            QFrame#LeftQuickAccessPanel QPushButton {{
+                border-radius: 11px;
+                padding: 7px 8px;
+                font-weight: 900;
+                text-align: center;
+            }}
+        """)
+
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(11, 10, 11, 11)
+        lay.setSpacing(7)
+
+        title = QLabel("◇  QUICK ACCESS")
+        title.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        title.setStyleSheet(f"color: {C.WHITE}; letter-spacing: 0.8px;")
+        lay.addWidget(title)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        self._left_map_btn = QPushButton("🗺  MAP")
+        self._left_map_btn.setFixedHeight(32)
+        self._left_map_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        self._left_map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._left_map_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(40,233,255,0.12);
+                color: {C.PRI};
+                border: 1px solid rgba(40,233,255,0.40);
+            }}
+            QPushButton:hover {{
+                background: rgba(40,233,255,0.26);
+                color: {C.WHITE};
+                border: 1px solid rgba(40,233,255,0.78);
+            }}
+        """)
+        self._left_map_btn.clicked.connect(self._open_security_map_quick)
+        row.addWidget(self._left_map_btn)
+
+        self._left_camera_btn = QPushButton("📷  CAMERA")
+        self._left_camera_btn.setFixedHeight(32)
+        self._left_camera_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        self._left_camera_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._left_camera_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(34,242,168,0.12);
+                color: {C.GREEN};
+                border: 1px solid rgba(34,242,168,0.40);
+            }}
+            QPushButton:hover {{
+                background: rgba(34,242,168,0.25);
+                color: {C.WHITE};
+                border: 1px solid rgba(34,242,168,0.78);
+            }}
+        """)
+        self._left_camera_btn.clicked.connect(self._open_camera_quick)
+        row.addWidget(self._left_camera_btn)
+
+        lay.addLayout(row)
+
+        hint = QLabel("Map and camera open in the main HUD.")
+        hint.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        hint.setStyleSheet(f"color: {C.TEXT_DIM};")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        return box
+
 
     def _build_friday_settings_panel(self):
         """
@@ -2862,48 +2996,6 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_sec("DIRECT COMMAND", "⌲"))
         lay.addLayout(self._build_input_row())
-
-        quick_tools = QHBoxLayout(); quick_tools.setSpacing(8)
-        self._quick_map_btn = QPushButton("🗺  OPEN MAP")
-        self._quick_map_btn.setFixedHeight(32)
-        self._quick_map_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
-        self._quick_map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._quick_map_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(40,233,255,0.11);
-                color: {C.PRI};
-                border: 1px solid rgba(40,233,255,0.38);
-                border-radius: 11px;
-            }}
-            QPushButton:hover {{
-                background: rgba(40,233,255,0.24);
-                color: {C.WHITE};
-                border: 1px solid rgba(40,233,255,0.72);
-            }}
-        """)
-        self._quick_map_btn.clicked.connect(self._open_security_map_quick)
-        quick_tools.addWidget(self._quick_map_btn)
-
-        self._quick_camera_open_btn = QPushButton("📷  OPEN CAMERA")
-        self._quick_camera_open_btn.setFixedHeight(32)
-        self._quick_camera_open_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
-        self._quick_camera_open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._quick_camera_open_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(34,242,168,0.11);
-                color: {C.GREEN};
-                border: 1px solid rgba(34,242,168,0.36);
-                border-radius: 11px;
-            }}
-            QPushButton:hover {{
-                background: rgba(34,242,168,0.23);
-                color: {C.WHITE};
-                border: 1px solid rgba(34,242,168,0.70);
-            }}
-        """)
-        self._quick_camera_open_btn.clicked.connect(self._open_camera_quick)
-        quick_tools.addWidget(self._quick_camera_open_btn)
-        lay.addLayout(quick_tools)
 
         buttons = QHBoxLayout(); buttons.setSpacing(8)
         self._standby_btn = QPushButton("⏻  STANDBY MODE")
