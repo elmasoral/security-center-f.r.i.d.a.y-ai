@@ -3669,10 +3669,7 @@ def _mpv3_build_security_center_quick_panel(self) -> QWidget:
     badge_wrap.setObjectName("MedpovSecurityBadgeWrap")
     badge_wrap.setStyleSheet(f"""
         QFrame#MedpovSecurityBadgeWrap {{
-            background: qradialgradient(cx:0.5, cy:0.5, radius:0.78,
-                stop:0 rgba(40, 233, 255, 0.055),
-                stop:0.55 rgba(40, 233, 255, 0.018),
-                stop:1 rgba(0, 0, 0, 0));
+           
             border: none;
         }}
     """)
