@@ -675,20 +675,27 @@ class JarvisLive:
                 tool_calls = result.tool_calls or []
                 if tool_calls:
                     summaries = []
+                    silent_tool_names = {"screen_process", "friday_camera_mode"}
                     for call in tool_calls[:3]:
                         shim = _OpenAIToolCallShim(call.id, call.name, call.args)
                         try:
                             fr = asyncio.run(self._execute_tool(shim))
                             payload = getattr(fr, "response", None) or {}
+                            if call.name in silent_tool_names:
+                                continue
                             if isinstance(payload, dict):
-                                summaries.append(str(payload.get("result") or "Done."))
+                                item = str(payload.get("result") or "Done.")
                             else:
-                                summaries.append(str(payload or "Done."))
+                                item = str(payload or "Done.")
+                            if "stay completely silent" in item.lower() or "do not speak" in item.lower():
+                                continue
+                            summaries.append(item)
                         except Exception as exc:
                             summaries.append(f"{call.name} failed: {exc}")
-                    spoken = re.sub(r"\s+", " ", " ".join(x for x in summaries if x)).strip() or "İşlem tamamlandı."
-                    self.ui.write_log("FRIDAY: " + spoken)
-                    self._local_tts(spoken)
+                    spoken = re.sub(r"\s+", " ", " ".join(x for x in summaries if x)).strip()
+                    if spoken:
+                        self.ui.write_log("FRIDAY: " + spoken)
+                        self._local_tts(spoken)
                 else:
                     spoken = result.text.strip() or "Komutu anladım."
                     self.ui.write_log("FRIDAY: " + spoken)

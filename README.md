@@ -642,3 +642,18 @@ OpenAI kullanmak için:
 3. OpenAI bağlantısını test et.
 4. AI Provider sekmesinden OpenAI veya Auto / Fallback seç.
 5. Kaydet ve uygulamayı yeniden başlat.
+
+## v2.7.1 OpenAI Natural Voice
+
+FRIDAY v2.7.1, OpenAI provider modundaki robotik Windows lokal TTS davranışını kaldırır. OpenAI üzerinden üretilen yazılı komut ve kamera/vision cevapları artık `gpt-4o-mini-tts` tabanlı doğal ses çıktısı ile okunabilir.
+
+### Eklenenler
+
+- OpenAI Provider modunda doğal OpenAI TTS ses çıkışı
+- OpenAI ayarlarına `TTS model` alanı
+- OpenAI voice seçimi: `marin`, `cedar`, `coral`, `nova`, `shimmer`, `alloy`, `ash`, `ballad`, `echo`, `fable`, `onyx`, `sage`, `verse`
+- Windows SAPI sadece yedek/offline fallback olarak bırakıldı
+- Yeni cevap geldiğinde eski TTS akışını kesen latest-wins ses token sistemi
+- Footer sürüm etiketi v2.7.1
+
+> Not: v2.7.1 ses çıkışını doğal hale getirir. Mikrofon transkripsiyon köprüsü hâlâ Gemini Live üzerinden çalışır. Tam OpenAI speech-to-speech deneyimi için sonraki ana sürümde OpenAI Realtime provider ayrı olarak bağlanmalıdır.

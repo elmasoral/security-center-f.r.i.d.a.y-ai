@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -23,6 +23,7 @@ DEFAULT_FALLBACK_PROVIDER = "openai"
 DEFAULT_OPENAI_TEXT_MODEL = "gpt-4.1-mini"
 DEFAULT_OPENAI_VISION_MODEL = "gpt-4.1-mini"
 DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime"
+DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_VOICE = "marin"
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
@@ -67,6 +68,7 @@ DEFAULTS: Dict[str, Any] = {
         "text_model": DEFAULT_OPENAI_TEXT_MODEL,
         "vision_model": DEFAULT_OPENAI_VISION_MODEL,
         "realtime_model": DEFAULT_OPENAI_REALTIME_MODEL,
+        "tts_model": DEFAULT_OPENAI_TTS_MODEL,
         "voice": DEFAULT_OPENAI_VOICE,
     },
 }
@@ -130,6 +132,15 @@ def _legacy_to_settings() -> Dict[str, Any]:
         openai_vision_model = api.get("openai_vision_model")
         if openai_vision_model:
             merged.setdefault("openai", {})["vision_model"] = str(openai_vision_model)
+        openai_realtime_model = api.get("openai_realtime_model")
+        if openai_realtime_model:
+            merged.setdefault("openai", {})["realtime_model"] = str(openai_realtime_model)
+        openai_tts_model = api.get("openai_tts_model")
+        if openai_tts_model:
+            merged.setdefault("openai", {})["tts_model"] = str(openai_tts_model)
+        openai_voice = api.get("openai_voice")
+        if openai_voice:
+            merged.setdefault("openai", {})["voice"] = str(openai_voice)
         ai_provider = api.get("friday_ai_provider")
         if ai_provider:
             merged.setdefault("assistant", {})["ai_provider"] = str(ai_provider)
@@ -169,6 +180,7 @@ def load_settings() -> Dict[str, Any]:
     settings.setdefault("openai", {}).setdefault("text_model", DEFAULT_OPENAI_TEXT_MODEL)
     settings["openai"].setdefault("vision_model", DEFAULT_OPENAI_VISION_MODEL)
     settings["openai"].setdefault("realtime_model", DEFAULT_OPENAI_REALTIME_MODEL)
+    settings["openai"].setdefault("tts_model", DEFAULT_OPENAI_TTS_MODEL)
     settings["openai"].setdefault("voice", DEFAULT_OPENAI_VOICE)
     return settings
 
@@ -189,6 +201,7 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged["openai"].setdefault("text_model", DEFAULT_OPENAI_TEXT_MODEL)
     merged["openai"].setdefault("vision_model", DEFAULT_OPENAI_VISION_MODEL)
     merged["openai"].setdefault("realtime_model", DEFAULT_OPENAI_REALTIME_MODEL)
+    merged["openai"].setdefault("tts_model", DEFAULT_OPENAI_TTS_MODEL)
     merged["openai"].setdefault("voice", DEFAULT_OPENAI_VOICE)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -224,6 +237,7 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
     api["openai_text_model"] = str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL)
     api["openai_vision_model"] = str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL)
     api["openai_realtime_model"] = str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
+    api["openai_tts_model"] = str(openai.get("tts_model") or DEFAULT_OPENAI_TTS_MODEL)
     api["openai_voice"] = str(openai.get("voice") or DEFAULT_OPENAI_VOICE)
     API_KEYS_PATH.write_text(json.dumps(api, ensure_ascii=False, indent=2), encoding="utf-8")
     scs = settings.get("security_center", {})
@@ -328,6 +342,10 @@ def get_openai_realtime_model() -> str:
     return str(load_settings().get("openai", {}).get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
 
 
+def get_openai_tts_model() -> str:
+    return str(load_settings().get("openai", {}).get("tts_model") or DEFAULT_OPENAI_TTS_MODEL)
+
+
 def get_openai_voice() -> str:
     return str(load_settings().get("openai", {}).get("voice") or DEFAULT_OPENAI_VOICE)
 
@@ -376,6 +394,7 @@ def bootstrap_environment() -> Dict[str, Any]:
     os.environ["FRIDAY_OPENAI_TEXT_MODEL"] = str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL)
     os.environ["FRIDAY_OPENAI_VISION_MODEL"] = str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL)
     os.environ["FRIDAY_OPENAI_REALTIME_MODEL"] = str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
+    os.environ["FRIDAY_OPENAI_TTS_MODEL"] = str(openai.get("tts_model") or DEFAULT_OPENAI_TTS_MODEL)
     os.environ["FRIDAY_OPENAI_VOICE"] = str(openai.get("voice") or DEFAULT_OPENAI_VOICE)
     return settings
 

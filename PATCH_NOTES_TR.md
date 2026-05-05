@@ -1,3 +1,63 @@
+# MEDPOV F.R.I.D.A.Y v2.7.1 — OpenAI Natural Voice Patch
+
+Bu patch v2.7.0 üzerine uygulanır.
+
+## Neden gerekliydi?
+
+v2.7.0'da OpenAI provider komut ve kamera analizini OpenAI ile yapıyordu; fakat ses okuma tarafında Windows lokal TTS/SAPI kullanılıyordu. Bu yüzden ses robotik, kopuk ve bazı Windows sistemlerinde COM hatası nedeniyle tamamen başarısız olabiliyordu.
+
+## Düzeltilenler
+
+- OpenAI provider cevaplarında Windows lokal TTS yerine OpenAI cloud TTS eklendi.
+- Varsayılan TTS model: `gpt-4o-mini-tts`.
+- Varsayılan OpenAI voice: `marin`.
+- OpenAI ayar paneline `TTS model` alanı eklendi.
+- OpenAI voice alanı combobox yapıldı.
+- Yeni cevap geldiğinde önceki TTS sesini kesen latest-wins kontrolü eklendi.
+- Windows SAPI sadece yedek fallback olarak bırakıldı.
+- SAPI fallback için thread içi COM initialize koruması eklendi.
+- OpenAI provider açıklaması “lokal TTS” yerine “doğal OpenAI TTS” olarak güncellendi.
+- Footer sürümü `v2.7.1` olarak güncellendi.
+
+## Önemli not
+
+Bu patch OpenAI ses çıkışını akıcı hale getirir. Mikrofon dinleme/transkripsiyon tarafı hâlâ Gemini Live köprüsü üzerinden çalışır. Eğer ChatGPT mobil uygulamasındaki gibi tam çift yönlü, akıcı speech-to-speech isteniyorsa sonraki büyük adım OpenAI Realtime provider entegrasyonudur.
+
+## Güncellenen dosyalar
+
+- `tools/friday_local_tts.py`
+- `tools/friday_settings_store.py`
+- `tools/friday_settings_dialog.py`
+- `config/friday_settings.example.json`
+- `config/api_keys.example.json`
+- `ui.py`
+- `README.md`
+
+## Kurulum
+
+Patch içindeki dosyaları proje köküne aynı klasör yapısıyla kopyala. Sonra:
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Ardından FRIDAY'i kapatıp yeniden aç.
+
+## Ayar önerisi
+
+Ayarlar > AI Provider:
+
+- AI Provider: `OpenAI`
+- Fallback: `OpenAI` veya `Gemini`
+
+Ayarlar > OpenAI:
+
+- TTS model: `gpt-4o-mini-tts`
+- OpenAI voice: `marin` veya `cedar`
+
+
 # MEDPOV F.R.I.D.A.Y v2.7.0 — Multi AI Provider Patch
 
 Bu patch v2.6.3 üzerine uygulanır.

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import urllib.error
@@ -29,6 +29,7 @@ from .friday_settings_store import (
     DEFAULT_OPENAI_TEXT_MODEL,
     DEFAULT_OPENAI_VISION_MODEL,
     DEFAULT_OPENAI_REALTIME_MODEL,
+    DEFAULT_OPENAI_TTS_MODEL,
     DEFAULT_OPENAI_VOICE,
     VOICE_OPTIONS,
     normalize_ai_provider,
@@ -202,14 +203,14 @@ class FridaySettingsDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.ai_provider_combo = QComboBox()
         self.ai_provider_combo.addItem("Gemini · mevcut canlı ses + tool orchestration", "gemini")
-        self.ai_provider_combo.addItem("OpenAI · komut/vision beyni + lokal TTS", "openai")
+        self.ai_provider_combo.addItem("OpenAI · komut/vision beyni + doğal OpenAI TTS", "openai")
         self.ai_provider_combo.addItem("Auto / Fallback · Gemini ana, OpenAI yedek", "auto")
         self.fallback_provider_combo = QComboBox()
         self.fallback_provider_combo.addItem("OpenAI", "openai")
         self.fallback_provider_combo.addItem("Gemini", "gemini")
         info = QLabel(
             "Gemini modu eski davranışı korur. OpenAI modu yazılı komutları ve kamera/görüntü analizini OpenAI ile işler; "
-            "mikrofon transkripsiyon köprüsü için mevcut Live bağlantısı açık kalır. Auto modunda Gemini sorun yaşarsa vision/text tarafında OpenAI yedeği kullanılabilir."
+            "mikrofon transkripsiyon köprüsü için mevcut Live bağlantısı açık kalır. OpenAI cevapları artık Windows lokal TTS yerine OpenAI doğal ses modeliyle okunur. Auto modunda Gemini sorun yaşarsa vision/text tarafında OpenAI yedeği kullanılabilir."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
@@ -296,12 +297,15 @@ class FridaySettingsDialog(QDialog):
         self.openai_text_model = QLineEdit(DEFAULT_OPENAI_TEXT_MODEL)
         self.openai_vision_model = QLineEdit(DEFAULT_OPENAI_VISION_MODEL)
         self.openai_realtime_model = QLineEdit(DEFAULT_OPENAI_REALTIME_MODEL)
-        self.openai_voice = QLineEdit(DEFAULT_OPENAI_VOICE)
+        self.openai_tts_model = QLineEdit(DEFAULT_OPENAI_TTS_MODEL)
+        self.openai_voice = QComboBox()
+        for voice_name in ["marin", "cedar", "coral", "nova", "shimmer", "alloy", "ash", "ballad", "echo", "fable", "onyx", "sage", "verse"]:
+            self.openai_voice.addItem(voice_name, voice_name)
         test_btn = QPushButton("OpenAI Bağlantısını Test Et")
         test_btn.clicked.connect(self._test_openai)
         info = QLabel(
             "OpenAI key config/friday_settings.json ve legacy config/api_keys.json içine yazılır. "
-            "Vision için JPEG/base64 image input kullanılır; yazılı komutlar function calling ile lokal FRIDAY araçlarına yönlendirilir."
+            "Vision için JPEG/base64 image input kullanılır; yazılı komutlar function calling ile lokal FRIDAY araçlarına yönlendirilir. OpenAI Provider modunda cevap sesi için OpenAI TTS kullanılır."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
@@ -309,7 +313,8 @@ class FridaySettingsDialog(QDialog):
         form.addRow("Text/command model", self.openai_text_model)
         form.addRow("Vision model", self.openai_vision_model)
         form.addRow("Realtime model", self.openai_realtime_model)
-        form.addRow("Voice", self.openai_voice)
+        form.addRow("TTS model", self.openai_tts_model)
+        form.addRow("OpenAI voice", self.openai_voice)
         form.addRow("", test_btn)
         form.addRow("", info)
         return w
@@ -346,7 +351,10 @@ class FridaySettingsDialog(QDialog):
         self.openai_text_model.setText(str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL))
         self.openai_vision_model.setText(str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL))
         self.openai_realtime_model.setText(str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL))
-        self.openai_voice.setText(str(openai.get("voice") or DEFAULT_OPENAI_VOICE))
+        self.openai_tts_model.setText(str(openai.get("tts_model") or DEFAULT_OPENAI_TTS_MODEL))
+        voice_idx = self.openai_voice.findData(str(openai.get("voice") or DEFAULT_OPENAI_VOICE))
+        if voice_idx >= 0:
+            self.openai_voice.setCurrentIndex(voice_idx)
 
     def _refresh_sc_endpoint_preview(self) -> None:
         self.sc_endpoint_preview.setText(api_url_from_base(self.sc_base_url.text()))
@@ -373,7 +381,8 @@ class FridaySettingsDialog(QDialog):
                 "text_model": self.openai_text_model.text().strip() or DEFAULT_OPENAI_TEXT_MODEL,
                 "vision_model": self.openai_vision_model.text().strip() or DEFAULT_OPENAI_VISION_MODEL,
                 "realtime_model": self.openai_realtime_model.text().strip() or DEFAULT_OPENAI_REALTIME_MODEL,
-                "voice": self.openai_voice.text().strip() or DEFAULT_OPENAI_VOICE,
+                "tts_model": self.openai_tts_model.text().strip() or DEFAULT_OPENAI_TTS_MODEL,
+                "voice": str(self.openai_voice.currentData() or DEFAULT_OPENAI_VOICE),
             },
         }
 

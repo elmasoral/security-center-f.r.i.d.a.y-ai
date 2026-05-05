@@ -3021,7 +3021,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(_fl("|", C.BORDER_A))
         lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("v2.7.0", C.TEXT_DIM))
+        lay.addWidget(_fl("v2.7.1", C.TEXT_DIM))
         lay.addWidget(_fl("⌁", C.PRI))
         lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
