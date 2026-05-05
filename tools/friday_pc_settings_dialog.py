@@ -2,27 +2,32 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from .friday_pc_settings_store import (
     add_trusted_path,
+    get_trusted_folders,
     load_pc_settings,
     remove_trusted_path,
     save_pc_settings,
@@ -33,7 +38,7 @@ class FridayPCSettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("MEDPOV FRIDAY PC Settings")
-        self.setMinimumWidth(820)
+        self.setMinimumSize(930, 760)
         self.settings: Dict[str, Any] = load_pc_settings()
         self._build_ui()
         self._load_values()
@@ -42,9 +47,11 @@ class FridayPCSettingsDialog(QDialog):
         self.setStyleSheet("""
             QDialog { background: #050b12; color: #e7f6ff; }
             QLabel { color: #c9d7e6; background: transparent; }
-            QLabel#Title { color:#28e9ff; font-size:17px; font-weight:900; letter-spacing:1px; }
+            QLabel#Title { color:#28e9ff; font-size:18px; font-weight:900; letter-spacing:1px; }
+            QLabel#Section { color:#ffb86b; font-weight:900; padding-top:8px; }
             QLabel#Hint { color:#8fa1b8; }
-            QLineEdit, QTextEdit, QListWidget {
+            QLabel#Tiny { color:#7f91aa; font-size:11px; }
+            QLineEdit, QTextEdit, QListWidget, QSpinBox {
                 background: #07111d;
                 color: #f3fbff;
                 border: 1px solid rgba(40,233,255,.28);
@@ -53,7 +60,7 @@ class FridayPCSettingsDialog(QDialog):
                 selection-background-color: #28e9ff;
                 selection-color: #04101e;
             }
-            QListWidget::item { padding: 7px; border-bottom: 1px solid rgba(255,255,255,.045); }
+            QListWidget::item { padding: 8px; border-bottom: 1px solid rgba(255,255,255,.05); }
             QListWidget::item:selected { background: rgba(40,233,255,.20); color: #ffffff; }
             QCheckBox { color:#c9d7e6; spacing:8px; }
             QCheckBox::indicator { width:16px; height:16px; }
@@ -68,6 +75,7 @@ class FridayPCSettingsDialog(QDialog):
             QPushButton:hover { background: #102f45; border-color:#28e9ff; }
             QPushButton#saveBtn { background:#28e9ff; color:#03101a; border-color:#86f7ff; }
             QPushButton#dangerBtn { border-color: rgba(255,112,112,.42); color:#ffc4c4; }
+            QPushButton#softBtn { color:#d7f7ff; }
         """)
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 14)
@@ -78,59 +86,104 @@ class FridayPCSettingsDialog(QDialog):
         root.addWidget(title)
 
         hint = QLabel(
-            "FRIDAY dosya kopyalama, zip, yedekleme, not, screenshot ve uygulama kontrol işlemlerini burada güvenilir olarak eklediğin klasörlerde yapar. "
-            "Proje klasörlerini buraya ekle: örn. C:\\wamp64\\www veya C:\\MEDPOV."
+            "FRIDAY dosya, proje yedeği, ekran görüntüsü/kaydı, not, Word/Notepad ve PC kontrol işlemlerini sadece burada güvenilir olarak eklediğin klasörlerde yapar. "
+            "Her klasöre kısa bir takma ad ver: örn. Takma ad 'projelerim' → C:\\wamp64\\www."
         )
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(6)
         self.enabled = QCheckBox("PC Workspace aktif")
-        self.allow_write = QCheckBox("Dosya yazma / kopyalama / zip / yedekleme aktif")
-        self.allow_delete = QCheckBox("Silme işlemleri sadece Geri Dönüşüm Kutusu ile aktif")
-        self.allow_apps = QCheckBox("Word, Notepad, klasör açma ve pencere kontrolü aktif")
+        self.allow_read = QCheckBox("Dosya okuma / listeleme / arama aktif")
+        self.allow_write = QCheckBox("Dosya yazma aktif")
+        self.allow_create = QCheckBox("Dosya / klasör oluşturma aktif")
+        self.allow_copy_move = QCheckBox("Kopyalama / taşıma / yeniden adlandırma aktif")
+        self.allow_zip_backup = QCheckBox("ZIP / proje yedeği alma aktif")
+        self.allow_delete = QCheckBox("Silme sadece Geri Dönüşüm Kutusu ile aktif")
+        self.allow_apps = QCheckBox("Uygulama ve pencere kontrolü aktif")
+        self.allow_open_path = QCheckBox("Güvenilir klasör / dosya açma aktif")
+        self.allow_office = QCheckBox("Word / Notepad yazdırma aktif")
+        self.allow_clipboard = QCheckBox("Clipboard kopyala / oku aktif")
         self.allow_screenshot = QCheckBox("Ekran görüntüsü alma aktif")
-        for cb in [self.enabled, self.allow_write, self.allow_delete, self.allow_apps, self.allow_screenshot]:
-            root.addWidget(cb)
+        self.allow_screen_recording = QCheckBox("Ekran kaydı alma aktif")
+        self.allow_system_report = QCheckBox("Disk / RAM / CPU sistem raporu aktif")
+        self.allow_window_control = QCheckBox("Aktif pencere bilgisi / pencere kontrolü aktif")
 
-        paths_label = QLabel("Güvenilir klasörler")
-        paths_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        paths_label.setStyleSheet("color:#ffb86b; padding-top:6px;")
+        checks = [
+            self.enabled, self.allow_read, self.allow_write,
+            self.allow_create, self.allow_copy_move, self.allow_zip_backup,
+            self.allow_delete, self.allow_apps, self.allow_open_path,
+            self.allow_office, self.allow_clipboard, self.allow_screenshot,
+            self.allow_screen_recording, self.allow_system_report, self.allow_window_control,
+        ]
+        for i, cb in enumerate(checks):
+            grid.addWidget(cb, i // 2, i % 2)
+        root.addLayout(grid)
+
+        paths_label = QLabel("Güvenilir klasörler ve takma adlar")
+        paths_label.setObjectName("Section")
         root.addWidget(paths_label)
 
+        tiny = QLabel("Örnek: Takma ad alanına 'projelerim' yaz, yol alanına C:\\wamp64\\www ekle. Sonra 'projelerim klasörünü listele' demen yeterli olur.")
+        tiny.setObjectName("Tiny")
+        tiny.setWordWrap(True)
+        root.addWidget(tiny)
+
         self.paths = QListWidget()
-        self.paths.setMinimumHeight(150)
+        self.paths.setMinimumHeight(170)
+        self.paths.currentItemChanged.connect(self._selected_folder_changed)
         root.addWidget(self.paths)
 
-        path_row = QHBoxLayout()
+        add_grid = QGridLayout()
+        self.nickname_input = QLineEdit()
+        self.nickname_input.setPlaceholderText("Takma ad / kısa isim: projelerim, friday, security, müşteri1...")
+        self.aliases_input = QLineEdit()
+        self.aliases_input.setPlaceholderText("Ek aliaslar virgülle: projeler, web, wamp, medpov...")
         self.path_input = QLineEdit()
         self.path_input.setPlaceholderText(r"C:\wamp64\www\proje veya C:\MEDPOV gibi klasör yolu")
         browse_btn = QPushButton("Gözat")
         browse_btn.clicked.connect(self._browse_trusted_path)
-        add_btn = QPushButton("Ekle")
+        add_btn = QPushButton("Ekle / Güncelle")
         add_btn.clicked.connect(self._add_path)
         remove_btn = QPushButton("Seçileni Kaldır")
         remove_btn.setObjectName("dangerBtn")
         remove_btn.clicked.connect(self._remove_selected_path)
-        path_row.addWidget(self.path_input, stretch=1)
-        path_row.addWidget(browse_btn)
-        path_row.addWidget(add_btn)
-        path_row.addWidget(remove_btn)
-        root.addLayout(path_row)
+        add_grid.addWidget(QLabel("Takma ad"), 0, 0)
+        add_grid.addWidget(self.nickname_input, 0, 1, 1, 3)
+        add_grid.addWidget(QLabel("Aliaslar"), 1, 0)
+        add_grid.addWidget(self.aliases_input, 1, 1, 1, 3)
+        add_grid.addWidget(QLabel("Klasör yolu"), 2, 0)
+        add_grid.addWidget(self.path_input, 2, 1)
+        add_grid.addWidget(browse_btn, 2, 2)
+        add_grid.addWidget(add_btn, 2, 3)
+        add_grid.addWidget(remove_btn, 2, 4)
+        root.addLayout(add_grid)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.backup_root = QLineEdit()
         self.screenshots_root = QLineEdit()
+        self.recordings_root = QLineEdit()
         self.notes_root = QLineEdit()
+        self.record_seconds = QSpinBox()
+        self.record_seconds.setRange(3, 600)
+        self.record_seconds.setSuffix(" sn max")
+        self.record_fps = QSpinBox()
+        self.record_fps.setRange(3, 30)
+        self.record_fps.setSuffix(" fps")
         form.addRow("Backup klasörü", self._with_browse(self.backup_root, "backup_root"))
         form.addRow("Screenshot klasörü", self._with_browse(self.screenshots_root, "screenshots_root"))
+        form.addRow("Ekran kaydı klasörü", self._with_browse(self.recordings_root, "recordings_root"))
         form.addRow("Not klasörü", self._with_browse(self.notes_root, "notes_root"))
+        form.addRow("Ekran kaydı limiti", self._two_spin_widget(self.record_seconds, self.record_fps))
         root.addLayout(form)
 
         self.result_box = QTextEdit()
         self.result_box.setReadOnly(True)
-        self.result_box.setFixedHeight(74)
+        self.result_box.setFixedHeight(92)
         self.result_box.setPlaceholderText("Kayıt sonucu burada görünecek.")
         root.addWidget(self.result_box)
 
@@ -145,14 +198,23 @@ class FridayPCSettingsDialog(QDialog):
         actions.addWidget(save_btn)
         root.addLayout(actions)
 
-    def _with_browse(self, line: QLineEdit, key: str):
+    def _two_spin_widget(self, a: QSpinBox, b: QSpinBox) -> QWidget:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(a)
+        row.addWidget(b)
+        row.addStretch(1)
+        w = QWidget()
+        w.setLayout(row)
+        return w
+
+    def _with_browse(self, line: QLineEdit, key: str) -> QWidget:
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         btn = QPushButton("Gözat")
         btn.clicked.connect(lambda _=False, k=key, l=line: self._browse_output_root(k, l))
         row.addWidget(line, stretch=1)
         row.addWidget(btn)
-        from PyQt6.QtWidgets import QWidget
         w = QWidget()
         w.setLayout(row)
         return w
@@ -160,21 +222,54 @@ class FridayPCSettingsDialog(QDialog):
     def _load_values(self) -> None:
         s = self.settings
         self.enabled.setChecked(bool(s.get("enabled", True)))
+        self.allow_read.setChecked(bool(s.get("allow_read", True)))
         self.allow_write.setChecked(bool(s.get("allow_write", True)))
+        self.allow_create.setChecked(bool(s.get("allow_create", True)))
+        self.allow_copy_move.setChecked(bool(s.get("allow_copy_move", True)))
+        self.allow_zip_backup.setChecked(bool(s.get("allow_zip_backup", True)))
         self.allow_delete.setChecked(bool(s.get("allow_delete_to_trash", True)))
         self.allow_apps.setChecked(bool(s.get("allow_app_control", True)))
+        self.allow_open_path.setChecked(bool(s.get("allow_open_path", True)))
+        self.allow_office.setChecked(bool(s.get("allow_office_control", True)))
+        self.allow_clipboard.setChecked(bool(s.get("allow_clipboard", True)))
         self.allow_screenshot.setChecked(bool(s.get("allow_screenshot", True)))
+        self.allow_screen_recording.setChecked(bool(s.get("allow_screen_recording", True)))
+        self.allow_system_report.setChecked(bool(s.get("allow_system_report", True)))
+        self.allow_window_control.setChecked(bool(s.get("allow_window_control", True)))
         self.paths.clear()
-        for path in s.get("trusted_paths", []) or []:
-            self.paths.addItem(str(path))
+        for folder in get_trusted_folders(include_disabled=True):
+            name = str(folder.get("name") or Path(str(folder.get("path", ""))).name or "Klasör")
+            path = str(folder.get("path") or "")
+            aliases = ", ".join(str(x) for x in (folder.get("aliases") or []) if str(x) != name)
+            status = "✓" if folder.get("enabled", True) else "×"
+            text = f"{status} {name}  →  {path}"
+            if aliases:
+                text += f"\n   alias: {aliases}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, folder)
+            item.setSizeHint(QSize(0, 46 if aliases else 34))
+            self.paths.addItem(item)
         self.backup_root.setText(str(s.get("backup_root", "")))
         self.screenshots_root.setText(str(s.get("screenshots_root", "")))
+        self.recordings_root.setText(str(s.get("recordings_root", "")))
         self.notes_root.setText(str(s.get("notes_root", "")))
+        self.record_seconds.setValue(int(s.get("screen_recording_max_seconds", 90) or 90))
+        self.record_fps.setValue(int(s.get("screen_recording_fps", 12) or 12))
+
+    def _selected_folder_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None = None) -> None:
+        if not current:
+            return
+        folder = current.data(Qt.ItemDataRole.UserRole) or {}
+        self.nickname_input.setText(str(folder.get("name") or ""))
+        self.path_input.setText(str(folder.get("path") or ""))
+        self.aliases_input.setText(", ".join(str(x) for x in (folder.get("aliases") or [])))
 
     def _browse_trusted_path(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Güvenilir klasör seç")
         if folder:
             self.path_input.setText(folder)
+            if not self.nickname_input.text().strip():
+                self.nickname_input.setText(Path(folder).name or "Klasör")
 
     def _browse_output_root(self, key: str, line: QLineEdit) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Klasör seç")
@@ -184,13 +279,18 @@ class FridayPCSettingsDialog(QDialog):
     def _add_path(self) -> None:
         raw = self.path_input.text().strip()
         if not raw:
+            QMessageBox.warning(self, "PC Settings", "Önce klasör yolu yaz veya Gözat ile seç.")
             return
+        nickname = self.nickname_input.text().strip() or Path(raw).name or "Klasör"
+        aliases = self.aliases_input.text().strip()
         try:
-            updated = add_trusted_path(raw)
+            updated = add_trusted_path(raw, name=nickname, aliases=aliases)
             self.settings = updated
             self._load_values()
             self.path_input.clear()
-            self.result_box.setPlainText(f"Klasör eklendi:\n{Path(raw).expanduser()}")
+            self.nickname_input.clear()
+            self.aliases_input.clear()
+            self.result_box.setPlainText(f"Klasör eklendi/güncellendi:\n{nickname} → {Path(raw).expanduser()}")
         except Exception as exc:
             QMessageBox.warning(self, "PC Settings", str(exc))
 
@@ -198,7 +298,8 @@ class FridayPCSettingsDialog(QDialog):
         item = self.paths.currentItem()
         if not item:
             return
-        raw = item.text()
+        folder = item.data(Qt.ItemDataRole.UserRole) or {}
+        raw = str(folder.get("path") or item.text())
         try:
             updated = remove_trusted_path(raw)
             self.settings = updated
@@ -207,22 +308,47 @@ class FridayPCSettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "PC Settings", str(exc))
 
-    def _save(self) -> None:
-        current_paths = [self.paths.item(i).text() for i in range(self.paths.count())]
+    def _collect_folders_from_list(self) -> List[Dict[str, Any]]:
+        folders: List[Dict[str, Any]] = []
+        for i in range(self.paths.count()):
+            folder = self.paths.item(i).data(Qt.ItemDataRole.UserRole) or {}
+            if folder.get("path"):
+                folders.append(dict(folder))
         raw = self.path_input.text().strip()
-        if raw and raw not in current_paths:
-            current_paths.append(raw)
+        if raw:
+            folders.append({
+                "name": self.nickname_input.text().strip() or Path(raw).name or "Klasör",
+                "path": raw,
+                "aliases": [x.strip() for x in self.aliases_input.text().split(",") if x.strip()],
+                "enabled": True,
+            })
+        return folders
+
+    def _save(self) -> None:
         data = dict(self.settings)
         data.update({
             "enabled": self.enabled.isChecked(),
-            "trusted_paths": current_paths,
+            "trusted_folders": self._collect_folders_from_list(),
             "backup_root": self.backup_root.text().strip(),
             "screenshots_root": self.screenshots_root.text().strip(),
+            "recordings_root": self.recordings_root.text().strip(),
             "notes_root": self.notes_root.text().strip(),
+            "allow_read": self.allow_read.isChecked(),
             "allow_write": self.allow_write.isChecked(),
+            "allow_create": self.allow_create.isChecked(),
+            "allow_copy_move": self.allow_copy_move.isChecked(),
+            "allow_zip_backup": self.allow_zip_backup.isChecked(),
             "allow_delete_to_trash": self.allow_delete.isChecked(),
             "allow_app_control": self.allow_apps.isChecked(),
+            "allow_open_path": self.allow_open_path.isChecked(),
+            "allow_office_control": self.allow_office.isChecked(),
+            "allow_clipboard": self.allow_clipboard.isChecked(),
             "allow_screenshot": self.allow_screenshot.isChecked(),
+            "allow_screen_recording": self.allow_screen_recording.isChecked(),
+            "allow_system_report": self.allow_system_report.isChecked(),
+            "allow_window_control": self.allow_window_control.isChecked(),
+            "screen_recording_max_seconds": self.record_seconds.value(),
+            "screen_recording_fps": self.record_fps.value(),
         })
         saved = save_pc_settings(data)
         self.settings = saved

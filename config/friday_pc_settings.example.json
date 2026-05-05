@@ -1,17 +1,44 @@
 {
   "enabled": true,
   "mode": "trusted_paths",
+  "trusted_folders": [
+    {
+      "name": "Projelerim",
+      "path": "C:\\wamp64\\www",
+      "aliases": ["projelerim", "projeler", "proje", "wamp", "www", "web"],
+      "enabled": true
+    },
+    {
+      "name": "MEDPOV",
+      "path": "C:\\MEDPOV",
+      "aliases": ["medpov", "medpov klasoru", "medpov klasörü"],
+      "enabled": true
+    }
+  ],
   "trusted_paths": [
-    "C:\\MEDPOV",
-    "C:\\wamp64\\www"
+    "C:\\wamp64\\www",
+    "C:\\MEDPOV"
   ],
   "backup_root": "C:\\Users\\YOUR_USER\\Documents\\MEDPOV_FRIDAY_Backups",
   "screenshots_root": "C:\\Users\\YOUR_USER\\Pictures\\MEDPOV_FRIDAY_Screenshots",
+  "recordings_root": "C:\\Users\\YOUR_USER\\Pictures\\MEDPOV_FRIDAY_Recordings",
   "notes_root": "C:\\Users\\YOUR_USER\\Documents\\MEDPOV_FRIDAY_Notes",
+  "allow_read": true,
   "allow_write": true,
+  "allow_create": true,
+  "allow_copy_move": true,
+  "allow_zip_backup": true,
   "allow_delete_to_trash": true,
   "allow_app_control": true,
+  "allow_open_path": true,
+  "allow_office_control": true,
+  "allow_clipboard": true,
   "allow_screenshot": true,
-  "zip_exclude_dirs": [".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "storage/logs"],
-  "zip_exclude_exts": [".pyc", ".log", ".tmp"]
+  "allow_screen_recording": true,
+  "allow_system_report": true,
+  "allow_window_control": true,
+  "screen_recording_max_seconds": 90,
+  "screen_recording_fps": 12,
+  "zip_exclude_dirs": [".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "storage/logs", "dist", "build"],
+  "zip_exclude_exts": [".pyc", ".log", ".tmp", ".cache"]
 }

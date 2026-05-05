@@ -326,23 +326,36 @@ TOOL_DECLARATIONS = [
     {
         "name": "pc_workspace",
         "description": (
-            "MEDPOV FRIDAY PC Workspace. Use for configured PC folders, project backups, zip archives, copying files, screenshots, quick notes, opening trusted folders/files, opening Word/Notepad, and disk checks. "
-            "Prefer this tool when the user says PC Settings, güvenilir klasör, proje klasörü, yedekle, zip yap, kopyala, ekran görüntüsü al, not al, Word aç, Notepad aç. "
+            "MEDPOV FRIDAY PC Workspace. Use for trusted PC folders, folder nicknames/aliases, project backups, zip archives, copying/moving/renaming files, screenshots, screen recording, quick notes, opening trusted folders/files, opening Word/Notepad, clipboard, disk and PC reports. "
+            "Prefer this tool when the user says PC Settings, güvenilir klasör, takma ad, nickname, projelerim, proje klasörü, yedekle, zip yap, kopyala, taşı, ekran görüntüsü al, ekran kaydı al, not al, Word aç, Notepad aç, sistem raporu. "
             "File operations are allowed only inside folders added in the PC Settings panel."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "status | list_paths | add_path | remove_path | list | tree | copy | zip | backup | note | screenshot | open_path | open_word | open_notepad | disk_usage"},
-                "path": {"type": "STRING", "description": "Path, trusted folder, or shortcut: desktop, downloads, documents, backups, screenshots, notes"},
-                "name": {"type": "STRING", "description": "Optional file/folder name inside path"},
-                "destination": {"type": "STRING", "description": "Destination folder for copy/zip"},
+                "action": {"type": "STRING", "description": "status | list_paths | aliases | add_path | remove_path | list | tree | copy | move | rename | delete | create_folder | write_text | append_text | read_text | find | recent_files | largest_files | project_summary | zip | backup | note | screenshot | screen_record | open_path | open_word | open_notepad | clipboard | disk_usage | system_report | active_window"},
+                "path": {"type": "STRING", "description": "Path, trusted folder nickname/alias, or shortcut: desktop, downloads, documents, backups, screenshots, recordings, notes, projelerim, friday, etc."},
+                "nickname": {"type": "STRING", "description": "Short friendly name for a trusted folder, e.g. projelerim"},
+                "aliases": {"type": "STRING", "description": "Comma-separated extra aliases for a trusted folder"},
+                "name": {"type": "STRING", "description": "Optional file/folder name inside path, or nickname when adding/removing folders"},
+                "new_name": {"type": "STRING", "description": "New filename for rename"},
+                "destination": {"type": "STRING", "description": "Destination folder nickname/path for copy/move/zip"},
                 "archive_name": {"type": "STRING", "description": "Optional zip archive name"},
                 "title": {"type": "STRING", "description": "Note/document title"},
-                "text": {"type": "STRING", "description": "Text to write/paste"},
+                "text": {"type": "STRING", "description": "Text to write/paste/copy"},
                 "content": {"type": "STRING", "description": "Note or document content"},
+                "extension": {"type": "STRING", "description": "Extension for file search, e.g. .php or .pdf"},
+                "mode": {"type": "STRING", "description": "Clipboard mode: read or write"},
+                "clipboard_action": {"type": "STRING", "description": "Clipboard mode: read or write"},
                 "depth": {"type": "INTEGER", "description": "Folder tree depth"},
                 "max_items": {"type": "INTEGER", "description": "Max listed items"},
+                "max_results": {"type": "INTEGER", "description": "Max search results"},
+                "max_chars": {"type": "INTEGER", "description": "Max characters when reading text"},
+                "count": {"type": "INTEGER", "description": "Count for recent/largest file lists"},
+                "duration_seconds": {"type": "INTEGER", "description": "Screen recording duration in seconds"},
+                "seconds": {"type": "INTEGER", "description": "Screen recording duration in seconds"},
+                "fps": {"type": "INTEGER", "description": "Screen recording FPS"},
+                "append": {"type": "BOOLEAN", "description": "Append instead of overwrite"},
                 "open_after": {"type": "BOOLEAN", "description": "Open note after creating it"}
             },
             "required": ["action"]
