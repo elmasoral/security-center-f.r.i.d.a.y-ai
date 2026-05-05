@@ -2854,6 +2854,9 @@ class MainWindow(QMainWindow):
         self._file_hint.setWordWrap(True)
         lay.addWidget(self._file_hint)
 
+        lay.addWidget(_sec("MAP & CAMERA QUICK ACCESS", "◈"))
+        lay.addWidget(self._build_map_camera_quick_access_panel())
+
         lay.addWidget(_sec("SECURITY CENTER QUICK LINKS", "✦"))
         lay.addWidget(self._build_security_center_quick_panel())
 
@@ -2953,6 +2956,69 @@ class MainWindow(QMainWindow):
 
         return w
 
+    def _build_map_camera_quick_access_panel(self) -> QWidget:
+        """Always-visible quick buttons for opening the map and camera."""
+        box = QFrame()
+        box.setObjectName("MapCameraQuickAccessPanel")
+        box.setStyleSheet(f"""
+            QFrame#MapCameraQuickAccessPanel {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 rgba(40, 233, 255, 0.14),
+                    stop:0.52 rgba(7, 24, 38, 0.92),
+                    stop:1 rgba(34, 242, 168, 0.12));
+                border: 1px solid rgba(40, 233, 255, 0.34);
+                border-radius: 16px;
+            }}
+            QFrame#MapCameraQuickAccessPanel QPushButton {{
+                border-radius: 12px;
+                padding: 10px 10px;
+                font-weight: 900;
+                letter-spacing: 0.5px;
+            }}
+            QPushButton#OpenMapQuickButton {{
+                color: {C.PRI};
+                background: rgba(40, 233, 255, 0.13);
+                border: 1px solid rgba(40, 233, 255, 0.48);
+            }}
+            QPushButton#OpenMapQuickButton:hover {{
+                color: {C.WHITE};
+                background: rgba(40, 233, 255, 0.26);
+                border: 1px solid rgba(40, 233, 255, 0.82);
+            }}
+            QPushButton#OpenCameraQuickButton {{
+                color: {C.GREEN};
+                background: rgba(34, 242, 168, 0.12);
+                border: 1px solid rgba(34, 242, 168, 0.44);
+            }}
+            QPushButton#OpenCameraQuickButton:hover {{
+                color: {C.WHITE};
+                background: rgba(34, 242, 168, 0.24);
+                border: 1px solid rgba(34, 242, 168, 0.78);
+            }}
+        """)
+
+        outer = QHBoxLayout(box)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        map_btn = QPushButton("🗺  OPEN MAP")
+        map_btn.setObjectName("OpenMapQuickButton")
+        map_btn.setFixedHeight(42)
+        map_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Black))
+        map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        map_btn.clicked.connect(self._open_security_map_quick)
+
+        cam_btn = QPushButton("📷  OPEN CAMERA")
+        cam_btn.setObjectName("OpenCameraQuickButton")
+        cam_btn.setFixedHeight(42)
+        cam_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Black))
+        cam_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cam_btn.clicked.connect(self._open_camera_quick)
+
+        outer.addWidget(map_btn)
+        outer.addWidget(cam_btn)
+        return box
+
     def _run_security_center_quick(self, command: str, send_now: bool = True):
         try:
             self._input.setText(command)
@@ -3005,6 +3071,23 @@ class MainWindow(QMainWindow):
         hint.setStyleSheet(f"color: {C.TEXT_DIM};")
         left.addWidget(head)
         left.addWidget(hint)
+
+        primary = QHBoxLayout()
+        primary.setSpacing(7)
+
+        map_big = QPushButton("🗺  Map")
+        map_big.setCursor(Qt.CursorShape.PointingHandCursor)
+        map_big.clicked.connect(self._open_security_map_quick)
+        map_big.setStyleSheet(f"color: {C.PRI}; border-color: rgba(40,233,255,0.58); background: rgba(40,233,255,0.14); text-align: center;")
+
+        cam_big = QPushButton("📷  Camera")
+        cam_big.setCursor(Qt.CursorShape.PointingHandCursor)
+        cam_big.clicked.connect(self._open_camera_quick)
+        cam_big.setStyleSheet(f"color: {C.GREEN}; border-color: rgba(34,242,168,0.54); background: rgba(34,242,168,0.12); text-align: center;")
+
+        primary.addWidget(map_big)
+        primary.addWidget(cam_big)
+        left.addLayout(primary)
 
         commands = [
             ("◉  Overview", "/sc overview", True),
