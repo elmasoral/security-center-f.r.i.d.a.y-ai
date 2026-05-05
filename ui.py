@@ -1402,47 +1402,66 @@ class HudCanvas(QWidget):
         p.drawRect(QRectF(8, 8, w - 16, h - 16))
 
 class MetricBar(QWidget):
-
-    _ICONS = {
-        "CPU": "◈", "MEM": "▣", "MEMORY": "▣", "NET": "◎", "NETWORK": "◎",
-        "GPU": "▤", "TMP": "♨", "TEMP": "♨",
-    }
+    """
+    Compact MEDPOV metric row.
+    v4: Smaller height so CPU / MEMORY / NETWORK / GPU / TEMP fit cleanly
+    inside the SYSTEM STATUS card without clipping.
+    """
 
     def __init__(self, label: str, color: str = C.PRI, parent=None):
         super().__init__(parent)
-        self._label = label
+        self._label = str(label or "").upper()
         self._color = color
         self._value = 0.0
-        self._text  = "--"
-        self.setFixedHeight(70)
-        self.setMinimumWidth(150)
+        self._text = "--"
+        self.setFixedHeight(46)
+        self.setMinimumWidth(118)
 
     def set_value(self, pct: float, text: str):
+        try:
+            pct = float(pct)
+        except Exception:
+            pct = 0.0
         self._value = max(0.0, min(100.0, pct))
-        self._text  = text
+        self._text = str(text or "--")
         self.update()
+
+    def _icon_text(self) -> str:
+        return {
+            "CPU": "â—†",
+            "MEM": "â–£",
+            "MEMORY": "â–£",
+            "NET": "â—",
+            "NETWORK": "â—",
+            "GPU": "â–¤",
+            "TMP": "â™¨",
+            "TEMP": "â™¨",
+        }.get(self._label, "â€¢")
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        W, H = self.width(), self.height()
+
+        W = float(self.width())
+        H = float(self.height())
 
         bg = QLinearGradient(0, 0, W, H)
-        bg.setColorAt(0.00, qcol("#092035", 245))
-        bg.setColorAt(0.55, qcol("#061421", 245))
-        bg.setColorAt(1.00, qcol("#030814", 250))
-        p.setBrush(QBrush(bg))
-        p.setPen(QPen(qcol(C.BORDER_A, 205), 1.15))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 15, 15)
+        bg.setColorAt(0.00, qcol("#0b2032", 238))
+        bg.setColorAt(0.48, qcol("#071827", 245))
+        bg.setColorAt(1.00, qcol("#040b15", 250))
 
-        # top glass shine
-        shine = QLinearGradient(0, 0, 0, H)
-        shine.setColorAt(0.00, qcol("#ffffff", 18))
-        shine.setColorAt(0.42, qcol("#ffffff", 0))
+        p.setPen(QPen(qcol(C.BORDER_A, 178), 1))
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 13, 13)
+
+        # Soft top glow
+        glow = QLinearGradient(0, 1, 0, H * 0.58)
+        glow.setColorAt(0.00, qcol(C.PRI, 28))
+        glow.setColorAt(1.00, qcol(C.PRI, 0))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(shine))
-        p.drawRoundedRect(QRectF(2, 2, W - 4, H * 0.52), 14, 14)
+        p.setBrush(QBrush(glow))
+        p.drawRoundedRect(QRectF(2, 2, W - 4, H * 0.54), 12, 12)
 
         if self._value > 85:
             bar_col = qcol(C.RED)
@@ -1451,252 +1470,57 @@ class MetricBar(QWidget):
         else:
             bar_col = qcol(self._color)
 
-        icon = self._ICONS.get(self._label.upper(), "◆")
-        icon_rect = QRectF(14, 16, 34, 34)
-        icon_bg = QRadialGradient(icon_rect.center(), 28)
-        icon_bg.setColorAt(0.00, qcol(self._color, 70))
-        icon_bg.setColorAt(1.00, qcol(self._color, 10))
-        p.setPen(QPen(qcol(self._color, 185), 1))
-        p.setBrush(QBrush(icon_bg))
-        p.drawRoundedRect(icon_rect, 10, 10)
+        # Icon chip
+        icon_rect = QRectF(13, 8, 28, 28)
+        chip_grad = QRadialGradient(icon_rect.center(), 22)
+        chip_grad.setColorAt(0.0, qcol(self._color, 105))
+        chip_grad.setColorAt(1.0, qcol("#061421", 235))
+        p.setBrush(QBrush(chip_grad))
+        p.setPen(QPen(qcol(self._color, 145), 1))
+        p.drawRoundedRect(icon_rect, 9, 9)
+
+        p.setFont(QFont("Segoe UI Symbol", 9, QFont.Weight.Bold))
+        p.setPen(qcol(self._color, 230))
+        p.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, self._icon_text())
+
+        # Label and value
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        p.setPen(qcol(C.WHITE, 232))
+        p.drawText(
+            QRectF(52, 7, max(20, W - 118), 14),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self._label,
+        )
 
         p.setFont(QFont("Segoe UI", 13, QFont.Weight.Black))
-        p.setPen(QPen(qcol(self._color, 230), 1))
-        p.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, icon)
+        p.setPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM))
+        p.drawText(
+            QRectF(W - 94, 5, 78, 18),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            self._text,
+        )
 
-        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
-        p.setPen(QPen(qcol(C.TEXT_MED), 1))
-        p.drawText(QRectF(58, 13, W - 136, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label.upper())
+        # Compact progress rail
+        bar_x = 52
+        bar_y = H - 14
+        bar_w = max(28, W - 72)
+        bar_h = 5
+        fill_w = int(bar_w * self._value / 100.0)
 
-        p.setFont(QFont("Segoe UI", 15, QFont.Weight.Black))
-        p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(W - 98, 12, 84, 24), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
-
-        bar_x = 58
-        bar_y = 44
-        bar_w = W - 76
-        bar_h = 7
-        fill_w = int(bar_w * self._value / 100)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(qcol(C.BAR_BG, 240)))
-        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 4, 4)
+        p.setBrush(QBrush(qcol("#0b2638", 245)))
+        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 3, 3)
+
         if fill_w > 0:
             grad = QLinearGradient(bar_x, bar_y, bar_x + max(1, fill_w), bar_y)
-            grad.setColorAt(0, qcol(self._color, 120))
-            grad.setColorAt(0.68, bar_col)
-            grad.setColorAt(1, qcol(C.WHITE, 210))
+            grad.setColorAt(0.0, qcol(self._color, 120))
+            grad.setColorAt(1.0, bar_col)
             p.setBrush(QBrush(grad))
-            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 4, 4)
+            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 3, 3)
 
-        # subtle right pulse marker
-        p.setBrush(QBrush(qcol(self._color, 165)))
-        p.drawEllipse(QPointF(W - 17, H - 16), 2.4, 2.4)
-
-
-
-class ShieldMark(QWidget):
-    """Premium MEDPOV shield mark used in the top header."""
-
-    def __init__(self, parent=None, size: int = 48):
-        super().__init__(parent)
-        self._size = int(size)
-        self.setFixedSize(self._size, self._size)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = float(self.width())
-        h = float(self.height())
-        cx, cy = w / 2.0, h / 2.0
-
-        halo = QRadialGradient(QPointF(cx, cy), min(w, h) * 0.70)
-        halo.setColorAt(0.00, qcol(C.PRI, 88))
-        halo.setColorAt(0.48, qcol(C.PRI, 28))
-        halo.setColorAt(1.00, qcol(C.PRI, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(halo))
-        p.drawEllipse(QPointF(cx, cy), w * 0.54, h * 0.54)
-
-        hex_path = QPainterPath()
-        pts = []
-        for i in range(6):
-            a = math.radians(30 + i * 60)
-            pts.append(QPointF(cx + math.cos(a) * w * 0.37, cy + math.sin(a) * h * 0.37))
-        hex_path.moveTo(pts[0])
-        for pt in pts[1:]:
-            hex_path.lineTo(pt)
-        hex_path.closeSubpath()
-
-        grad = QLinearGradient(0, 0, w, h)
-        grad.setColorAt(0.0, qcol('#0a4058', 235))
-        grad.setColorAt(0.55, qcol('#062031', 245))
-        grad.setColorAt(1.0, qcol('#03101a', 248))
-        p.setBrush(QBrush(grad))
-        p.setPen(QPen(qcol(C.PRI, 210), 1.5))
-        p.drawPath(hex_path)
-
-        shield = QPainterPath()
-        shield.moveTo(cx, cy - h * 0.22)
-        shield.lineTo(cx + w * 0.18, cy - h * 0.13)
-        shield.lineTo(cx + w * 0.15, cy + h * 0.11)
-        shield.quadTo(cx, cy + h * 0.28, cx - w * 0.15, cy + h * 0.11)
-        shield.lineTo(cx - w * 0.18, cy - h * 0.13)
-        shield.closeSubpath()
-        p.setBrush(QBrush(qcol(C.PRI, 42)))
-        p.setPen(QPen(qcol(C.PRI, 230), 1.4))
-        p.drawPath(shield)
-
-        p.setPen(QPen(qcol(C.GREEN, 210), 1.2))
-        p.drawLine(QPointF(cx - w * 0.07, cy - h * 0.01), QPointF(cx - w * 0.01, cy + h * 0.06))
-        p.drawLine(QPointF(cx - w * 0.01, cy + h * 0.06), QPointF(cx + w * 0.11, cy - h * 0.08))
-
-
-class ActivityLineWidget(QWidget):
-    """Smooth telemetry sparkline for the left sidebar."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(58)
-        random.seed(2605)
-        self._values = [
-            0.22, 0.24, 0.27, 0.23, 0.30, 0.34, 0.40, 0.52,
-            0.66, 0.61, 0.50, 0.39, 0.32, 0.45, 0.57, 0.62,
-            0.54, 0.47, 0.50, 0.44, 0.49, 0.52, 0.48, 0.56,
-        ]
-        self._tick = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._advance)
-        self._timer.start(900)
-
-    def _advance(self):
-        self._tick += 1
-        base = 0.48 + 0.16 * math.sin(self._tick * 0.72) + 0.08 * math.sin(self._tick * 1.63)
-        val = max(0.18, min(0.86, base))
-        self._values = self._values[1:] + [val]
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        W, H = self.width(), self.height()
-        pad_x, pad_y = 10, 9
-        rect = QRectF(pad_x, pad_y, W - pad_x * 2, H - pad_y * 2)
-
-        p.setPen(Qt.PenStyle.NoPen)
-        bg = QLinearGradient(0, 0, W, H)
-        bg.setColorAt(0, qcol('#061a28', 150))
-        bg.setColorAt(1, qcol('#020a12', 180))
-        p.setBrush(QBrush(bg))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 12, 12)
-
-        p.setPen(QPen(qcol(C.PRI, 22), 1))
-        for i in range(1, 4):
-            y = rect.top() + rect.height() * i / 4
-            p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
-
-        if len(self._values) < 2:
-            return
-
-        def point(i, v):
-            x = rect.left() + rect.width() * i / (len(self._values) - 1)
-            y = rect.bottom() - rect.height() * v
-            return QPointF(x, y)
-
-        line = QPainterPath()
-        line.moveTo(point(0, self._values[0]))
-        for i, v in enumerate(self._values[1:], start=1):
-            line.lineTo(point(i, v))
-
-        fill = QPainterPath(line)
-        fill.lineTo(QPointF(rect.right(), rect.bottom()))
-        fill.lineTo(QPointF(rect.left(), rect.bottom()))
-        fill.closeSubpath()
-        fg = QLinearGradient(0, rect.top(), 0, rect.bottom())
-        fg.setColorAt(0.0, qcol(C.PRI, 76))
-        fg.setColorAt(1.0, qcol(C.PRI, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(fg))
-        p.drawPath(fill)
-
-        glow_pen = QPen(qcol(C.PRI, 65), 5)
-        glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        glow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        p.setPen(glow_pen)
-        p.drawPath(line)
-
-        pen = QPen(qcol(C.PRI, 235), 1.8)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        p.setPen(pen)
-        p.drawPath(line)
-
-        last = point(len(self._values) - 1, self._values[-1])
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(qcol(C.GREEN, 230)))
-        p.drawEllipse(last, 3.2, 3.2)
-
-
-class SecurityBadgeWidget(QWidget):
-    """Decorative Security Center badge for the right panel."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(88, 88)
-        self._tick = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._animate)
-        self._timer.start(55)
-
-    def _animate(self):
-        self._tick = (self._tick + 1) % 360
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        W, H = self.width(), self.height()
-        cx, cy = W / 2, H / 2
-        r = min(W, H) * 0.40
-
-        halo = QRadialGradient(QPointF(cx, cy), r * 1.55)
-        halo.setColorAt(0.0, qcol(C.PRI, 62))
-        halo.setColorAt(0.58, qcol(C.PRI, 16))
-        halo.setColorAt(1.0, qcol(C.PRI, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(halo))
-        p.drawEllipse(QPointF(cx, cy), r * 1.55, r * 1.55)
-
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for mul, alpha, width in [(1.0, 125, 1.2), (0.78, 80, 1.0), (1.18, 45, 1.0)]:
-            p.setPen(QPen(qcol(C.PRI, alpha), width))
-            rr = r * mul
-            p.drawPolygon(*[
-                QPointF(cx + math.cos(math.radians(30 + i * 60 + self._tick * 0.08)) * rr,
-                        cy + math.sin(math.radians(30 + i * 60 + self._tick * 0.08)) * rr)
-                for i in range(6)
-            ])
-
-        shield = QPainterPath()
-        shield.moveTo(cx, cy - r * 0.58)
-        shield.lineTo(cx + r * 0.48, cy - r * 0.34)
-        shield.lineTo(cx + r * 0.40, cy + r * 0.34)
-        shield.quadTo(cx, cy + r * 0.75, cx - r * 0.40, cy + r * 0.34)
-        shield.lineTo(cx - r * 0.48, cy - r * 0.34)
-        shield.closeSubpath()
-        p.setBrush(QBrush(qcol('#06263a', 215)))
-        p.setPen(QPen(qcol(C.PRI, 215), 1.5))
-        p.drawPath(shield)
-
-        lock = QRectF(cx - r * 0.20, cy - r * 0.04, r * 0.40, r * 0.34)
-        p.setPen(QPen(qcol(C.GREEN, 225), 1.4))
-        p.setBrush(QBrush(qcol(C.GREEN, 22)))
-        p.drawRoundedRect(lock, 4, 4)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawArc(QRectF(cx - r * 0.18, cy - r * 0.25, r * 0.36, r * 0.36), 20 * 16, 140 * 16)
-        p.setPen(QPen(qcol(C.PRI, 150), 1))
-        p.drawLine(QPointF(cx, cy + r * 0.04), QPointF(cx, cy + r * 0.18))
-
+        # Right micro status dot
+        p.setBrush(QBrush(bar_col))
+        p.drawEllipse(QPointF(W - 16, bar_y + bar_h / 2), 2.0, 2.0)
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
@@ -2419,7 +2243,7 @@ class MainWindow(QMainWindow):
         """)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setSpacing(8)
 
         def section(title: str, icon: str = "✦"):
             box = QFrame()
@@ -2552,7 +2376,7 @@ class MainWindow(QMainWindow):
 
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(8)
+        lay.setSpacing(7)
 
         title = QLabel("⚙  FRIDAY SETTINGS")
         title.setObjectName("FridaySettingsTitle")
@@ -2628,7 +2452,7 @@ class MainWindow(QMainWindow):
         """)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setSpacing(8)
 
         def _sec(txt, icon="▸"):
             row = QHBoxLayout(); row.setSpacing(8)
@@ -3598,4 +3422,5 @@ except Exception:
     pass
 
 # === /MEDPOV FRIDAY UI V3 FILE INPUT + SECURITY BADGE FIX ===
+
 
