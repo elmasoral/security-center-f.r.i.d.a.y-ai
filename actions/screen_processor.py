@@ -277,7 +277,9 @@ class _VisionSession:
         self._player                                           = None
         self._lock:       threading.Lock                       = threading.Lock()
         self._request_id: int                                   = 0
+        self._active_request_id: int                            = 0
         self._discard_response_until_turn_complete: bool        = False
+        self._last_send_error_ts: float                         = 0.0
 
     def start(self, player=None, timeout: float = 12.0) -> None:
         with self._lock:
@@ -335,12 +337,14 @@ class _VisionSession:
                 break
 
     async def _cancel_now(self) -> None:
+        self._active_request_id = self._request_id
         self._discard_response_until_turn_complete = True
         await self._drain_queue(self._out_queue)
         await self._drain_queue(self._audio_in)
 
     async def _queue_latest_request(self, request_id: int, image_bytes: bytes, mime_type: str, user_text: str) -> None:
         # Latest-wins: a new visual command immediately removes old queued frames and old audio.
+        self._active_request_id = request_id
         self._discard_response_until_turn_complete = True
         await self._drain_queue(self._out_queue)
         await self._drain_queue(self._audio_in)
@@ -416,27 +420,47 @@ class _VisionSession:
                 print(f"[Vision] ⏭️  Skipping stale request #{request_id}")
                 continue
             if not self._session:
-                print("[Vision] ⚠️  No session — dropping image")
+                print("[Vision] ⚠️  No session — requeue after reconnect")
+                await asyncio.sleep(0.35)
+                if request_id == self._request_id:
+                    await self._out_queue.put((request_id, image_bytes, mime_type, user_text))
                 continue
             try:
                 b64 = base64.b64encode(image_bytes).decode("ascii")
-                await self._session.send_client_content(
-                    turns={
-                        "parts": [
-                            {"inline_data": {"mime_type": mime_type, "data": b64}},
-                            {"text": user_text},
-                        ]
-                    },
-                    turn_complete=True,
+                await asyncio.wait_for(
+                    self._session.send_client_content(
+                        turns={
+                            "parts": [
+                                {"inline_data": {"mime_type": mime_type, "data": b64}},
+                                {"text": user_text},
+                            ]
+                        },
+                        turn_complete=True,
+                    ),
+                    timeout=8.0,
                 )
                 # New turn has been submitted; from this point incoming audio belongs to the latest command.
+                self._active_request_id = request_id
                 self._discard_response_until_turn_complete = False
                 print(f"[Vision] 📤 Sent latest #{request_id} {len(image_bytes):,} bytes")
             except Exception as e:
-                print(f"[Vision] ⚠️  Send error: {e}")
+                # Eski davranış burada sadece print edip devam ediyordu. WebSocket 1011/timeout
+                # sonrası session kırık kaldığı için sonraki komutlar 'analiz devam ediyor' hissi veriyordu.
+                self._discard_response_until_turn_complete = True
+                now = time.time()
+                if now - self._last_send_error_ts > 2.5:
+                    self._last_send_error_ts = now
+                    try:
+                        if self._player:
+                            self._player.write_log("ERR: Görsel analiz bağlantısı yenileniyor. Lütfen tekrar kameraya bak de.")
+                    except Exception:
+                        pass
+                print(f"[Vision] ⚠️  Send error, forcing reconnect: {e}")
+                raise
 
     async def _recv_loop(self) -> None:
         transcript: list[str] = []
+        transcript_request_id = 0
         try:
             async for response in self._session.receive():
                 if response.data and not self._discard_response_until_turn_complete:
@@ -449,6 +473,9 @@ class _VisionSession:
                 if (not self._discard_response_until_turn_complete) and sc.output_transcription and sc.output_transcription.text:
                     chunk = sc.output_transcription.text.strip()
                     if chunk:
+                        if transcript_request_id != self._active_request_id:
+                            transcript = []
+                            transcript_request_id = self._active_request_id
                         transcript.append(chunk)
 
                 if sc.turn_complete:
@@ -456,12 +483,17 @@ class _VisionSession:
                         transcript = []
                         self._discard_response_until_turn_complete = False
                         continue
+                    # Eğer bu sırada kullanıcı yeni bir kamera sorusu sorduysa eski turn cevabını yazma/okuma.
+                    if transcript_request_id and transcript_request_id != self._request_id:
+                        transcript = []
+                        continue
                     if transcript and self._player:
                         full = re.sub(r"\s+", " ", " ".join(transcript)).strip()
                         if full:
                             self._player.write_log(f"FRIDAY: {full}")
                             print(f"[Vision] 💬 {full}")
                     transcript = []
+                    transcript_request_id = 0
 
         except Exception as e:
             print(f"[Vision] ⚠️  Recv error: {e}")
@@ -551,12 +583,12 @@ def screen_process(
                 try:
                     # UI zaten kamerayı açtı; aynı cihazı worker thread içinde tekrar açma.
                     # İlk deneme hızlıdır; frame henüz hazır değilse kısa bir retry penceresi kullanılır.
-                    image_bytes, mime_type = _capture_ui_camera_snapshot(player, total_wait=2.4)
+                    image_bytes, mime_type = _capture_ui_camera_snapshot(player, total_wait=4.8)
                     print(f"[Vision] 📷 UI camera snapshot compressed: {len(image_bytes):,} bytes")
                 except Exception as ui_exc:
                     print(f"[Vision] ❌ UI camera snapshot failed after retry window: {ui_exc}")
                     try:
-                        player.write_log("ERR: Kamera görüntüsü hazırlanamadı. Kamera açıldıysa 1 saniye sonra tekrar 'kameraya bak' de.")
+                        player.write_log("ERR: Kamera ilk frame'i hazırlayamadı. Nesneyi kameraya tutup tekrar 'kameraya bak' de.")
                     except Exception:
                         pass
                     return False

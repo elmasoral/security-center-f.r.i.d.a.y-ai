@@ -1736,6 +1736,11 @@ class LogWidget(QTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setFont(QFont("Cascadia Mono", 8))
+        try:
+            # Sağ panel uzun çalışmalarda ağırlaşmasın.
+            self.document().setMaximumBlockCount(450)
+        except Exception:
+            pass
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
@@ -1764,72 +1769,62 @@ class LogWidget(QTextEdit):
                 height: 0px;
             }}
         """)
-        self._queue: list[str] = []
-        self._typing  = False
-        self._text    = ""
-        self._pos     = 0
-        self._tag     = "sys"
-        self._line_prefix = ""
-        self._tmr = QTimer(self)
-        self._tmr.timeout.connect(self._step)
-        self._sig.connect(self._enqueue)
+        # Eski sürümde loglar harf harf yazılıyordu. Kamera/voice akışında
+        # kuyruk büyüyünce kullanıcı bir önceki konuşmayı geç görüyordu.
+        # v2.6.3: satırı tek seferde basıyoruz; komut geçmişi artık anlık akar.
+        self._last_text = ""
+        self._last_text_ts = 0.0
+        self._sig.connect(self._append_now)
 
     def append_log(self, text: str):
-        self._sig.emit(text)
+        self._sig.emit(str(text or ""))
 
-    def _enqueue(self, text: str):
-        self._queue.append(text)
-        if not self._typing:
-            self._next()
+    def _tag_for(self, text: str) -> str:
+        tl = (text or "").lower()
+        if tl.startswith("you:"):
+            return "you"
+        if tl.startswith("jarvis:") or tl.startswith("friday:"):
+            return "ai"
+        if tl.startswith("file:"):
+            return "file"
+        if "err" in tl or "error" in tl:
+            return "err"
+        return "sys"
 
-    def _next(self):
-        if not self._queue:
-            self._typing = False
+    def _append_now(self, text: str):
+        text = str(text or "").strip()
+        if not text:
             return
-        self._typing = True
-        self._text   = self._queue.pop(0)
-        self._pos    = 0
-        tl = self._text.lower()
-        if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith("jarvis:") or tl.startswith("friday:"): self._tag = "ai"
-        elif tl.startswith("file:"):   self._tag = "file"
-        elif "err" in tl or "error" in tl: self._tag = "err"
-        else:                          self._tag = "sys"
-        self._line_prefix = time.strftime("%H:%M:%S") + "  "
+
+        # Aynı Qt sinyal zincirinden gelen kamera online/offline tekrarlarını temiz tut.
+        now = time.time()
+        if text == self._last_text and (now - self._last_text_ts) < 0.85:
+            return
+        self._last_text = text
+        self._last_text_ts = now
+
+        tag = self._tag_for(text)
+        col = {
+            "you":  qcol(C.WHITE),
+            "ai":   qcol(C.PRI),
+            "err":  qcol(C.RED),
+            "file": qcol(C.GREEN),
+            "sys":  qcol(C.ACC2),
+        }.get(tag, qcol(C.TEXT))
+
         cur = self.textCursor()
         cur.movePosition(cur.MoveOperation.End)
-        fmt = cur.charFormat()
-        fmt.setForeground(QBrush(qcol(C.TEXT_DIM, 210)))
-        cur.insertText(self._line_prefix, fmt)
-        self.setTextCursor(cur)
-        self._tmr.start(4)
 
-    def _step(self):
-        if self._pos < len(self._text):
-            ch  = self._text[self._pos]
-            cur = self.textCursor()
-            fmt = cur.charFormat()
-            col = {
-                "you":  qcol(C.WHITE),
-                "ai":   qcol(C.PRI),
-                "err":  qcol(C.RED),
-                "file": qcol(C.GREEN),
-                "sys":  qcol(C.ACC2),
-            }.get(self._tag, qcol(C.TEXT))
-            fmt.setForeground(QBrush(col))
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText(ch, fmt)
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            self._pos += 1
-        else:
-            self._tmr.stop()
-            cur = self.textCursor()
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n")
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            QTimer.singleShot(20, self._next)
+        ts_fmt = cur.charFormat()
+        ts_fmt.setForeground(QBrush(qcol(C.TEXT_DIM, 210)))
+        cur.insertText(time.strftime("%H:%M:%S") + "  ", ts_fmt)
+
+        txt_fmt = cur.charFormat()
+        txt_fmt.setForeground(QBrush(col))
+        cur.insertText(text + "\n", txt_fmt)
+
+        self.setTextCursor(cur)
+        self.ensureCursorVisible()
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -3026,7 +3021,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(_fl("|", C.BORDER_A))
         lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("v2.6.0", C.TEXT_DIM))
+        lay.addWidget(_fl("v2.6.3", C.TEXT_DIM))
         lay.addWidget(_fl("⌁", C.PRI))
         lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
@@ -3150,8 +3145,14 @@ class MainWindow(QMainWindow):
         self._camera_stop_sig.emit()
 
     def _stop_camera_mode_now(self):
+        was_online = False
+        try:
+            was_online = self.hud.camera_is_open()
+        except Exception:
+            was_online = False
         self.hud.stop_camera_mode()
-        self._log.append_log("SYS: CAMERA VISION offline.")
+        if was_online:
+            self._log.append_log("SYS: CAMERA VISION offline.")
 
     def capture_camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
         return self.hud.camera_snapshot(wait_seconds=wait_seconds)

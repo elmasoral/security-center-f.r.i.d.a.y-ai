@@ -1,3 +1,29 @@
+# MEDPOV F.R.I.D.A.Y v2.6.3 — Hızlı Log + Vision Stabilite Patch
+
+Bu patch v2.6.2 üzerine uygulanır.
+
+## Düzeltilenler
+
+- Sağdaki FRIDAY Command Log artık harf harf yazmak yerine satırı anlık basar.
+- Uzun kamera/voice konuşmalarında log kuyruğunun geriden gelmesi azaltıldı.
+- Aynı anda gelen tekrar `CAMERA VISION online/offline` logları temizlendi.
+- Kamera ilk açılışında snapshot bekleme süresi güvenli şekilde artırıldı.
+- Vision WebSocket `1011 keepalive ping timeout` sonrası kırık session içinde kalmıyor; bağlantı zorla yenileniyor.
+- Send timeout eklendi; görsel analiz takılı kalırsa kullanıcıya kısa hata logu basılıyor.
+- Eski vision cevabının yeni kamera komutundan sonra konuşma/loglama ihtimali azaltıldı.
+- Footer sürüm etiketi v2.6.3 olarak güncellendi.
+
+## Değişen dosyalar
+
+- `ui.py`
+- `actions/screen_processor.py`
+- `PATCH_NOTES_TR.md`
+
+## Kurulum
+
+Zip içindeki dosyaları proje köküne aynı klasör yapısıyla kopyalayın ve FRIDAY'i yeniden başlatın.
+
+
 # MEDPOV F.R.I.D.A.Y v2.6.2 — Kamera Snapshot + Live Reconnect Stabilite Patch
 
 Bu patch v2.6.1 üzerine uygulanır.
