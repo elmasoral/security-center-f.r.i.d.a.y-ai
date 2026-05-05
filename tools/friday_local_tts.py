@@ -4,7 +4,7 @@ import os
 import re
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 _TTS_SAMPLE_RATE = 24_000
 _TTS_CHANNELS = 1
@@ -259,5 +259,30 @@ def speak_text(text: str, muted: bool = False) -> bool:
     return _speak_windows_sapi(msg, token)
 
 
-def speak_text_async(text: str, muted: bool = False) -> None:
-    threading.Thread(target=speak_text, args=(text, muted), daemon=True, name="FridayOpenAITTS").start()
+def speak_text_async(
+    text: str,
+    muted: bool = False,
+    on_start: Optional[Callable[[], None]] = None,
+    on_end: Optional[Callable[[], None]] = None,
+) -> None:
+    """Run TTS in a worker thread.
+
+    Optional callbacks are used by the main FRIDAY runtime to mark the
+    assistant as speaking. That temporarily gates microphone capture and
+    prevents FRIDAY from hearing its own speaker output as a new command.
+    """
+    def _runner() -> None:
+        started = False
+        try:
+            msg = _clean(text)
+            if muted or not msg:
+                return
+            if callable(on_start):
+                on_start()
+                started = True
+            speak_text(msg, muted=False)
+        finally:
+            if started and callable(on_end):
+                on_end()
+
+    threading.Thread(target=_runner, daemon=True, name="FridayOpenAITTS").start()

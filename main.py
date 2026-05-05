@@ -621,6 +621,14 @@ class JarvisLive:
         self._openai_voice_pending = False
         self._last_provider_command_ts = 0.0
 
+        # OpenAI/local TTS echo protection. When FRIDAY speaks through the
+        # computer speakers, Gemini's microphone transcription bridge can hear
+        # that audio and send it back as if the user said it. These fields gate
+        # microphone capture and filter any late assistant-echo transcripts.
+        self._assistant_audio_guard_until = 0.0
+        self._last_assistant_spoken_norm = ""
+        self._last_assistant_spoken_raw = ""
+
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
         repl = str.maketrans({"ı":"i", "ğ":"g", "ü":"u", "ş":"s", "ö":"o", "ç":"c"})
@@ -630,6 +638,60 @@ class JarvisLive:
 
     def _is_model_audio_suppressed(self) -> bool:
         return time.time() < float(getattr(self, "_suppress_model_audio_until", 0.0) or 0.0)
+
+    def _is_assistant_audio_guard_active(self) -> bool:
+        return time.time() < float(getattr(self, "_assistant_audio_guard_until", 0.0) or 0.0)
+
+    def _begin_local_assistant_audio(self, text: str) -> None:
+        norm = self._norm_text(text)
+        self._last_assistant_spoken_norm = norm
+        self._last_assistant_spoken_raw = str(text or "")
+        # Keep the gate open while cloud TTS is generated and played. It is
+        # refreshed on end with a short tail to catch speaker reverb/late STT.
+        self._assistant_audio_guard_until = time.time() + 90.0
+        self.set_speaking(True)
+
+    def _end_local_assistant_audio(self) -> None:
+        self._assistant_audio_guard_until = time.time() + 2.5
+        self.set_speaking(False)
+
+    def _looks_like_assistant_echo(self, text: str) -> bool:
+        """Return True for transcripts that are probably FRIDAY's own voice.
+
+        This is intentionally only active during/shortly after local TTS, so a
+        real user can still say similar words later without being blocked.
+        """
+        if not self._is_assistant_audio_guard_active():
+            return False
+        t = self._norm_text(text)
+        last = str(getattr(self, "_last_assistant_spoken_norm", "") or "")
+        if not t or not last:
+            return False
+        if len(t) >= 8 and (t in last or last in t):
+            return True
+
+        # Common helper phrases often leak back from speakers exactly after
+        # greeting/help responses.
+        echo_phrases = (
+            "sana nasil yardimci olabilirim",
+            "size nasil yardimci olabilirim",
+            "hangi konuda destek",
+            "ne yapmak istersiniz",
+            "sorularinizi veya isteklerinizi",
+            "yardimci olmaya hazirim",
+            "how can i help",
+            "how may i help",
+        )
+        if any(p in t for p in echo_phrases):
+            return True
+
+        tw = [w for w in t.split() if len(w) > 2]
+        lw = [w for w in last.split() if len(w) > 2]
+        if len(tw) >= 3 and lw:
+            overlap = len(set(tw) & set(lw)) / max(1, len(set(tw)))
+            if overlap >= 0.62:
+                return True
+        return False
 
 
     def _command_provider(self) -> str:
@@ -641,7 +703,14 @@ class JarvisLive:
     def _local_tts(self, text: str) -> None:
         try:
             from tools.friday_local_tts import speak_text_async
-            speak_text_async(text, muted=bool(getattr(self.ui, "muted", False)))
+            if bool(getattr(self.ui, "muted", False)):
+                return
+            speak_text_async(
+                text,
+                muted=False,
+                on_start=lambda: self._begin_local_assistant_audio(text),
+                on_end=self._end_local_assistant_audio,
+            )
         except Exception as exc:
             print(f"[FRIDAY] Local TTS skipped: {exc}")
 
@@ -1281,6 +1350,8 @@ class JarvisLive:
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
+            if self._is_assistant_audio_guard_active():
+                jarvis_speaking = True
             if not jarvis_speaking and not self.ui.muted:
                 data = indata.tobytes()
                 if self.ui.standby:
@@ -1332,8 +1403,13 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                if self._looks_like_assistant_echo(txt):
+                                    continue
                                 in_buf.append(txt)
                                 live_in = " ".join(in_buf).strip()
+                                if self._looks_like_assistant_echo(live_in):
+                                    in_buf = []
+                                    continue
 
                                 # Handle camera commands / visual questions as soon as the
                                 # input transcript is visible, before Gemini's normal answer
@@ -1358,6 +1434,10 @@ class JarvisLive:
                                 self._turn_done_event.set()
 
                             full_in = " ".join(in_buf).strip()
+                            if full_in and self._looks_like_assistant_echo(full_in):
+                                full_in = ""
+                                self._openai_voice_pending = False
+                                self._voice_local_handled = False
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                                 if self._openai_voice_pending:
