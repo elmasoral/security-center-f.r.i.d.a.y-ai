@@ -811,12 +811,12 @@ class JarvisLive:
     def _openai_realtime_session_update(self, legacy: bool = False) -> dict:
         """Build a Realtime session.update payload.
 
-        v2.8.2 defaults to the GA Realtime schema. The previous patch kept the
+        v2.8.3 keeps the GA Realtime schema strict and explicit. The previous patch kept the
         beta websocket header while sending GA fields; that is why the server
-        rejected `session.output_modalities`. In GA mode we remove the beta
-        header and send `session.type = realtime` + `output_modalities`. If an
-        older beta endpoint is detected, legacy=True uses the older flat schema
-        with `modalities` instead.
+        rejected earlier audio fields. GA mode must send the PCM format with
+        both `type` and `rate` for input and output audio. If an older beta
+        endpoint is detected, legacy=True uses the older flat schema with
+        `modalities` instead.
         """
         lang = "tr" if FRIDAY_RESPONSE_LANGUAGE == "tr" else "en"
         voice = self._openai_realtime_voice()
@@ -871,7 +871,7 @@ class JarvisLive:
                         },
                     },
                     "output": {
-                        "format": {"type": "audio/pcm"},
+                        "format": {"type": "audio/pcm", "rate": 24000},
                         "voice": voice,
                     },
                 },
@@ -905,16 +905,34 @@ class JarvisLive:
             return False
 
     def _openai_request_audio_response(self) -> dict:
+        """Create a response request that matches the active Realtime schema.
+
+        GA Realtime accepts `output_modalities` and an optional audio output
+        block. Supplying the PCM rate here as well as in session.update keeps
+        the audio contract explicit and prevents silent/text-only fallbacks on
+        stricter endpoints.
+        """
         if str(getattr(self, "_openai_realtime_schema", "ga") or "ga") == "beta":
             return {"type": "response.create", "response": {"modalities": ["audio", "text"]}}
-        return {"type": "response.create", "response": {"output_modalities": ["audio"]}}
+        return {
+            "type": "response.create",
+            "response": {
+                "output_modalities": ["audio"],
+                "audio": {
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "voice": self._openai_realtime_voice(),
+                    }
+                },
+            },
+        }
 
     def _openai_retry_session_update_from_error(self, msg: str) -> bool:
         """Retry session.update once across GA/Beta schema differences."""
         if getattr(self, "_openai_session_update_ok", False):
             return False
         low = (msg or "").lower()
-        if "unknown parameter" not in low:
+        if "unknown parameter" not in low and "missing required parameter" not in low:
             return False
         if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
             return False
@@ -923,6 +941,12 @@ class JarvisLive:
         # field names inside the same socket. The next reconnect also uses the
         # beta header via _openai_realtime_schema.
         if "session.type" in low or "session.output_modalities" in low or "session.audio" in low or "session.noise_reduction" in low:
+            # GA accepts audio.output.format.rate, while beta does not understand
+            # the nested audio object. If the GA endpoint asks for the rate, the
+            # current patched payload already includes it; do not downgrade.
+            if "session.audio.output.format.rate" in low:
+                self._openai_session_update_retry = 1
+                return self._queue_openai_event_threadsafe(self._openai_realtime_session_update(legacy=False))
             self._openai_session_update_retry = 1
             self._openai_realtime_schema = "beta"
             self.ui.write_log("SYS: OpenAI Realtime eski şema uyumluluk modu etkinleştirildi.")
