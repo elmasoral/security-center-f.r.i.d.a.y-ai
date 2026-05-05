@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 import random
@@ -3256,3 +3256,4 @@ except NameError:
     except NameError:
         pass
 # --- /MEDPOV FRIDAY settings panel bridge ---
+
