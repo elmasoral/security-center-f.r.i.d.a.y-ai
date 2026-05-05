@@ -3974,6 +3974,26 @@ def _mpv3_build_security_center_quick_panel(self) -> QWidget:
         grid.addWidget(btn, i // 2, i % 2)
 
     left.addLayout(grid)
+
+    mini_actions = QHBoxLayout()
+    mini_actions.setContentsMargins(0, 2, 0, 0)
+    mini_actions.setSpacing(8)
+
+    map_mini = QPushButton("🗺  Map")
+    map_mini.setFixedHeight(28)
+    map_mini.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+    map_mini.setCursor(Qt.CursorShape.PointingHandCursor)
+    map_mini.clicked.connect(self._open_security_map_quick)
+    mini_actions.addWidget(map_mini)
+
+    cam_mini = QPushButton("📷  Camera")
+    cam_mini.setFixedHeight(28)
+    cam_mini.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+    cam_mini.setCursor(Qt.CursorShape.PointingHandCursor)
+    cam_mini.clicked.connect(self._open_camera_quick)
+    mini_actions.addWidget(cam_mini)
+
+    left.addLayout(mini_actions)
     outer.addLayout(left, stretch=1)
 
     badge_wrap = QFrame()
@@ -4031,6 +4051,14 @@ def _mpv3_build_right_panel(self) -> QWidget:
     # kept for compatibility with _on_file_selected, but visual text now lives inside drop zone
     self._file_hint = QLabel("")
     self._file_hint.setVisible(False)
+
+    # Always visible quick buttons. This V3 monkey-patched right panel is the one
+    # actually used by the current FRIDAY build, so the buttons must live here.
+    lay.addWidget(_mpv3_panel_section("MAP & CAMERA QUICK ACCESS"))
+    try:
+        lay.addWidget(self._build_map_camera_quick_access_panel())
+    except Exception:
+        lay.addWidget(_mpv7_build_map_camera_quick_access_panel(self))
 
     lay.addWidget(_mpv3_panel_section("SECURITY CENTER QUICK LINKS"))
     lay.addWidget(self._build_security_center_quick_panel())
@@ -4533,6 +4561,161 @@ except Exception as _mpv5_settings_patch_error:
         pass
 
 # === /MEDPOV FRIDAY UI V5 SPLIT SETTINGS + PC WORKSPACE PANEL ===
+
+
+# === MEDPOV FRIDAY UI V7 ALWAYS VISIBLE MAP/CAMERA BUTTONS ===
+# The current build uses a later V3 monkey-patched right panel, so we provide
+# both real Qt buttons in that panel and clickable floating buttons on the HUD.
+
+def _mpv7_build_map_camera_quick_access_panel(self) -> QWidget:
+    box = QFrame()
+    box.setObjectName("MapCameraQuickAccessPanelV7")
+    box.setStyleSheet(f"""
+        QFrame#MapCameraQuickAccessPanelV7 {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 rgba(40, 233, 255, 0.15),
+                stop:0.52 rgba(7, 24, 38, 0.96),
+                stop:1 rgba(34, 242, 168, 0.13));
+            border: 1px solid rgba(40, 233, 255, 0.36);
+            border-radius: 16px;
+        }}
+        QFrame#MapCameraQuickAccessPanelV7 QPushButton {{
+            border-radius: 11px;
+            padding: 8px 10px;
+            font-weight: 900;
+            letter-spacing: 0.5px;
+        }}
+        QPushButton#OpenMapQuickButtonV7 {{
+            color: {C.PRI};
+            background: rgba(40, 233, 255, 0.13);
+            border: 1px solid rgba(40, 233, 255, 0.52);
+        }}
+        QPushButton#OpenMapQuickButtonV7:hover {{
+            color: {C.WHITE};
+            background: rgba(40, 233, 255, 0.27);
+            border: 1px solid rgba(40, 233, 255, 0.84);
+        }}
+        QPushButton#OpenCameraQuickButtonV7 {{
+            color: {C.GREEN};
+            background: rgba(34, 242, 168, 0.12);
+            border: 1px solid rgba(34, 242, 168, 0.46);
+        }}
+        QPushButton#OpenCameraQuickButtonV7:hover {{
+            color: {C.WHITE};
+            background: rgba(34, 242, 168, 0.24);
+            border: 1px solid rgba(34, 242, 168, 0.80);
+        }}
+    """)
+
+    lay = QHBoxLayout(box)
+    lay.setContentsMargins(10, 10, 10, 10)
+    lay.setSpacing(8)
+
+    map_btn = QPushButton("🗺  OPEN MAP")
+    map_btn.setObjectName("OpenMapQuickButtonV7")
+    map_btn.setFixedHeight(38)
+    map_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    map_btn.clicked.connect(self._open_security_map_quick)
+    lay.addWidget(map_btn)
+
+    cam_btn = QPushButton("📷  OPEN CAMERA")
+    cam_btn.setObjectName("OpenCameraQuickButtonV7")
+    cam_btn.setFixedHeight(38)
+    cam_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    cam_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    cam_btn.clicked.connect(self._open_camera_quick)
+    lay.addWidget(cam_btn)
+
+    return box
+
+
+def _mpv7_hud_quick_button_rects(self) -> dict:
+    w = float(self.width())
+    h = float(self.height())
+    margin = 24.0
+    gap = 10.0
+    btn_w = 138.0
+    btn_h = 36.0
+
+    x = w - margin - (btn_w * 2.0 + gap)
+    y = 24.0
+
+    if x < 22.0:
+        btn_w = max(108.0, (w - 54.0) / 2.0)
+        x = 22.0
+
+    return {
+        "map": QRectF(x, y, btn_w, btn_h),
+        "camera": QRectF(x + btn_w + gap, y, btn_w, btn_h),
+    }
+
+
+def _mpv7_draw_single_hud_button(p: QPainter, rect: QRectF, label: str, color: str, icon: str):
+    p.save()
+    glow = QRadialGradient(rect.center(), max(rect.width(), rect.height()) * 0.78)
+    glow.setColorAt(0.00, qcol(color, 76))
+    glow.setColorAt(0.72, qcol(color, 12))
+    glow.setColorAt(1.00, qcol(color, 0))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(glow))
+    p.drawRoundedRect(rect.adjusted(-7, -7, 7, 7), 15, 15)
+
+    fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    fill.setColorAt(0.00, qcol(color, 48))
+    fill.setColorAt(0.45, qcol("#061522", 226))
+    fill.setColorAt(1.00, qcol(color, 24))
+    p.setPen(QPen(qcol(color, 165), 1.2))
+    p.setBrush(QBrush(fill))
+    p.drawRoundedRect(rect, 12, 12)
+
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 238))
+    p.drawText(rect.adjusted(12, 0, -10, 0), Qt.AlignmentFlag.AlignCenter, f"{icon}  {label}")
+    p.restore()
+
+
+def _mpv7_draw_hud_quick_buttons(self, p: QPainter):
+    try:
+        rects = _mpv7_hud_quick_button_rects(self)
+        self._mpv7_hud_quick_rects = rects
+        _mpv7_draw_single_hud_button(p, rects["map"], "MAP", C.PRI, "🗺")
+        _mpv7_draw_single_hud_button(p, rects["camera"], "CAMERA", C.GREEN, "📷")
+    except Exception:
+        pass
+
+
+def _mpv7_hud_quick_hit(self, pos: QPointF) -> str | None:
+    try:
+        rects = getattr(self, "_mpv7_hud_quick_rects", None) or _mpv7_hud_quick_button_rects(self)
+        if rects.get("map") and rects["map"].contains(pos):
+            return "map"
+        if rects.get("camera") and rects["camera"].contains(pos):
+            return "camera"
+    except Exception:
+        pass
+    return None
+
+
+def _mpv7_trigger_hud_quick(self, action: str):
+    try:
+        win = self.window()
+        if action == "map" and hasattr(win, "_open_security_map_quick"):
+            QTimer.singleShot(0, win._open_security_map_quick)
+            return True
+        if action == "camera" and hasattr(win, "_open_camera_quick"):
+            QTimer.singleShot(0, win._open_camera_quick)
+            return True
+    except Exception:
+        pass
+    return False
+
+try:
+    MainWindow._build_map_camera_quick_access_panel = _mpv7_build_map_camera_quick_access_panel
+except Exception:
+    pass
+
+# === /MEDPOV FRIDAY UI V7 ALWAYS VISIBLE MAP/CAMERA BUTTONS ===
 
 # === MEDPOV FRIDAY UI V6 SECURITY CENTER GLOBAL MAP HUD ===
 # Large AI-grade world map mode for Security Center map-intelligence data.
@@ -5334,8 +5517,15 @@ _MPV6_ORIGINAL_HUD_WHEEL = getattr(HudCanvas, "wheelEvent", None)
 
 
 def _mpv6_hud_mouse_press_event(self, event):
+    pos = _mp_map_event_pos(event)
+
+    if event.button() == Qt.MouseButton.LeftButton:
+        quick_action = _mpv7_hud_quick_hit(self, pos)
+        if quick_action and _mpv7_trigger_hud_quick(self, quick_action):
+            event.accept()
+            return
+
     if bool(getattr(self, "security_map_mode", False)):
-        pos = _mp_map_event_pos(event)
         rect = _mp_map_widget_rect(self)
         if rect.contains(pos) and event.button() == Qt.MouseButton.LeftButton:
             _mp_map_init(self)
@@ -5453,10 +5643,19 @@ def _mpv6_hud_paint_event(self, event):
     if bool(getattr(self, "security_map_mode", False)):
         p = QPainter(self)
         _mp_map_draw(self, p, float(self.width()), float(self.height()))
+        _mpv7_draw_hud_quick_buttons(self, p)
         p.end()
         return
+
     if _MPV6_ORIGINAL_HUD_PAINT:
-        return _MPV6_ORIGINAL_HUD_PAINT(self, event)
+        result = _MPV6_ORIGINAL_HUD_PAINT(self, event)
+        try:
+            p = QPainter(self)
+            _mpv7_draw_hud_quick_buttons(self, p)
+            p.end()
+        except Exception:
+            pass
+        return result
 
 
 def _mpv6_start_security_map_now(self, payload):
