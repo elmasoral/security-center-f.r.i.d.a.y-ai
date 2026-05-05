@@ -1080,7 +1080,7 @@ class HudCanvas(QWidget):
             # Vision modülü ayrı kamera açmaya çalışmasın diye periyodik JPEG snapshot sakla.
             if (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
                 try:
-                    ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+                    ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
                     if ok_jpg:
                         with self._camera_lock:
                             self._camera_snapshot_bytes = jpg.tobytes()
@@ -1094,7 +1094,7 @@ class HudCanvas(QWidget):
             self._camera_error = str(exc)
             self.update()
 
-    def camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
+    def camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
         """
         screen_processor kamera analizi yaparken aynı kamera cihazını ikinci kez açmasın diye
         canlı HUD tarafından üretilen son JPEG frame'i thread-safe şekilde döndürür.
@@ -2530,7 +2530,7 @@ class MainWindow(QMainWindow):
         self.hud.stop_camera_mode()
         self._log.append_log("SYS: CAMERA VISION offline.")
 
-    def capture_camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
+    def capture_camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
         return self.hud.camera_snapshot(wait_seconds=wait_seconds)
 
     def closeEvent(self, event):
@@ -2732,7 +2732,7 @@ class JarvisUI:
     def stop_camera_mode(self):
         self._win.stop_camera_mode()
 
-    def capture_camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
+    def capture_camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
         return self._win.capture_camera_snapshot(wait_seconds=wait_seconds)
 
 

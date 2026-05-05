@@ -83,9 +83,9 @@ _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
 
-_IMG_MAX_W = 512
-_IMG_MAX_H = 288
-_JPEG_Q    = 55
+_IMG_MAX_W = 640
+_IMG_MAX_H = 360
+_JPEG_Q    = 60
 
 _SYSTEM_PROMPT = (
     "You are F.R.I.D.A.Y, MEDPOV's private desktop AI assistant. "
@@ -182,17 +182,11 @@ def _capture_camera() -> tuple[bytes, str]:
     index   = _get_camera_index()
     backend = _cv2_backend()
     cap     = cv2.VideoCapture(index, backend)
-    try:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, _IMG_MAX_W)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _IMG_MAX_H)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    except Exception:
-        pass
 
     if not cap.isOpened():
         raise RuntimeError(f"Camera index {index} could not be opened.")
 
-    for _ in range(3):
+    for _ in range(10):
         cap.read()
 
     ret, frame = cap.read()
@@ -206,7 +200,7 @@ def _capture_camera() -> tuple[bytes, str]:
         img = PIL.Image.fromarray(rgb)
         img.thumbnail((_IMG_MAX_W, _IMG_MAX_H), PIL.Image.BILINEAR)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=_JPEG_Q, optimize=False)
+        img.save(buf, format="JPEG", quality=_JPEG_Q)
         return buf.getvalue(), "image/jpeg"
 
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_Q])
@@ -223,24 +217,20 @@ class _VisionSession:
         self._player                                           = None
         self._lock:       threading.Lock                       = threading.Lock()
 
-    def start(self, player=None, timeout: float = 12.0) -> None:
+    def start(self, player=None, timeout: float = 25.0) -> None:
         with self._lock:
-            if player is not None:
-                self._player = player
-
             if self._thread and self._thread.is_alive():
-                should_start = False
-            else:
-                should_start = True
-                self._ready_evt.clear()
-                self._thread = threading.Thread(
-                    target=self._run_event_loop,
-                    daemon=True,
-                    name="VisionSessionThread",
-                )
-                self._thread.start()
+                if player is not None:
+                    self._player = player
+                return
+            self._player = player
+            self._thread = threading.Thread(
+                target=self._run_event_loop,
+                daemon=True,
+                name="VisionSessionThread",
+            )
+            self._thread.start()
 
-        # Even if the thread already exists, wait until the Live session is really ready.
         if not self._ready_evt.wait(timeout=timeout):
             raise RuntimeError(f"Vision session did not connect within {timeout}s.")
         print("[Vision] ✅ Session ready")
@@ -310,6 +300,7 @@ class _VisionSession:
             print(f"[Vision] 🔄 Reconnecting in {backoff:.0f}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 1.5, 30.0)
+            self._ready_evt.set()  
 
     async def _send_loop(self) -> None:
         while True:
@@ -411,14 +402,6 @@ def screen_process(
 
     print(f"[Vision] ▶ angle={angle!r}  question='{user_text[:80]}'")
 
-    # Put the UI into camera mode immediately, before the remote vision session connects.
-    # This makes FRIDAY feel instant even on the first analysis.
-    if angle == "camera" and player is not None and hasattr(player, "start_camera_mode"):
-        try:
-            player.start_camera_mode(camera_index=None)
-        except Exception:
-            pass
-
     try:
         _ensure_session(player=player)
     except Exception as e:
@@ -431,7 +414,7 @@ def screen_process(
             # Canlı HUD frame'i JPEG snapshot olarak kullanılır; böylece kamera kilitlenmez.
             if player is not None and hasattr(player, "capture_camera_snapshot"):
                 try:
-                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=1.0)
+                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=2.5)
                     print(f"[Vision] 📷 UI camera snapshot: {len(image_bytes):,} bytes")
                 except Exception as ui_exc:
                     print(f"[Vision] ⚠️  UI camera snapshot failed: {ui_exc}")

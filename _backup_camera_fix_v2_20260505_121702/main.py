@@ -22,7 +22,7 @@ from actions.weather_report    import weather_action
 from actions.send_message      import send_message
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process, warmup_session
+from actions.screen_processor  import screen_process
 from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
@@ -203,11 +203,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Captures and analyzes the screen or webcam image. "
             "MUST be called when user asks what is on screen, what you see, "
-            "analyze my screen, look at camera, webcam, what am I holding, "
-            "what is in my hand, Turkish requests like 'elimde ne tutuyorum', "
-            "'buna bak', 'kameraya bak', or any visual question about the real world. "
-            "Use angle='camera' for webcam/hand/object/room/user questions. "
-            "Use angle='screen' only for desktop/screen questions. "
+            "analyze my screen, look at camera, etc. "
             "You have NO visual ability without this tool. "
             "After calling this tool, stay SILENT — the vision module speaks directly."
         ),
@@ -517,23 +513,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "friday_camera_mode",
-        "description": (
-            "Opens or closes the FRIDAY camera vision HUD. "
-            "Use this for direct camera mode commands such as camera on/off, "
-            "kamera aç/kapat, kamerayı aç/kapat, görsel moda geç. "
-            "This only changes the live camera HUD; for visual analysis call screen_process with angle='camera'. "
-            "Never say you cannot open or close the camera if this tool is available."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "open | close"}
-            },
-            "required": ["action"]
-        }
-    },
-    {
         "name": "save_memory",
         "description": (
             "Save an important personal fact about the user to long-term memory. "
@@ -582,13 +561,6 @@ class JarvisLive:
         self._wake_audio_queue: asyncio.Queue | None = None
         self._wake_word_notice_sent = False
 
-        # Local camera / vision guards. These prevent Gemini Live from saying
-        # "I cannot open the camera" after FRIDAY already handled the command.
-        self._suppress_model_audio_until = 0.0
-        self._voice_local_handled = False
-        self._last_direct_camera_vision_ts = 0.0
-        self._last_camera_mode_command_ts = 0.0
-
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
         repl = str.maketrans({"ı":"i", "ğ":"g", "ü":"u", "ş":"s", "ö":"o", "ç":"c"})
@@ -596,132 +568,34 @@ class JarvisLive:
         text = re.sub(r"\s+", " ", text)
         return text
 
-    def _is_model_audio_suppressed(self) -> bool:
-        return time.time() < float(getattr(self, "_suppress_model_audio_until", 0.0) or 0.0)
-
-    def _drain_audio_queue(self):
-        q = getattr(self, "audio_in_queue", None)
-        if not q:
-            return
-        try:
-            while True:
-                q.get_nowait()
-        except Exception:
-            pass
-
-    def _suppress_model_output(self, seconds: float = 4.0):
-        self._suppress_model_audio_until = max(
-            float(getattr(self, "_suppress_model_audio_until", 0.0) or 0.0),
-            time.time() + max(0.5, float(seconds or 0.5)),
-        )
-        self._drain_audio_queue()
-        try:
-            self.set_speaking(False)
-        except Exception:
-            pass
-
-    def _is_camera_direct_command(self, text: str) -> str | None:
-        t = self._norm_text(text)
-        if not t:
-            return None
-
-        close_phrases = (
-            "/camera-off", "/kamera-kapat",
-            "kamerayi kapat", "kamerayı kapat",
-            "kamera kapat", "kamera modunu kapat",
-            "gorsel modu kapat", "görsel modu kapat",
-            "vision mode off", "camera off", "close camera", "stop camera"
-        )
-        open_phrases = (
-            "/camera", "/kamera",
-            "kamerayi ac", "kamerayı aç",
-            "kamera ac", "kamera aç",
-            "kamera modunu ac", "kamera modunu aç",
-            "gorsel moda gec", "görsel moda geç",
-            "kamerayi kullan", "kamerayı kullan",
-            "camera on", "open camera", "start camera", "vision mode"
-        )
-
-        if any(p in t for p in close_phrases):
-            return "close"
-        if any(p in t for p in open_phrases):
-            return "open"
-        return None
-
-    def _looks_like_camera_vision_request(self, text: str) -> bool:
-        """Detect visual real-world questions before Gemini produces a wrong normal answer."""
-        t = self._norm_text(text)
-        if not t:
-            return False
-
-        # Screen-specific questions must stay in normal tool flow / angle=screen.
-        screen_words = ("ekran", "monitorde", "monitörde", "desktop", "sayfada", "pencerede")
-        if any(w in t for w in screen_words):
-            return False
-
-        camera_phrases = (
-            "elimde ne", "elinde ne", "ne tutuyorum", "ne tutuyorsun",
-            "elimdekini", "elimdeki", "elime bak", "ellerime bak",
-            "su an elimde", "şu an elimde", "suan elimde",
-            "buna bak", "bunu goruyor", "bunu görüyor", "bunu tani", "bunu tanı",
-            "ne gosteriyorum", "ne gösteriyorum", "gosteriyorum", "gösteriyorum",
-            "kameraya bak", "kameradan bak", "kameradan gor", "kameradan gör",
-            "beni goruyor", "beni görüyor", "ne goruyorsun", "ne görüyorsun",
-            "onumde ne", "önümde ne", "masada ne", "odada ne",
-            "what am i holding", "what is in my hand", "what do you see",
-            "look at camera", "look through camera", "use camera", "webcam"
-        )
-        return any(p in t for p in camera_phrases)
-
-    def _set_camera_mode_local(self, action: str, source: str = "local") -> bool:
-        now = time.time()
-        # A partial voice transcription can repeat the same phrase a few times.
-        if now - float(getattr(self, "_last_camera_mode_command_ts", 0.0) or 0.0) < 1.2:
-            return True
-        self._last_camera_mode_command_ts = now
-
-        action = (action or "open").lower().strip()
-        if action == "close":
-            if hasattr(self.ui, "stop_camera_mode"):
-                self.ui.stop_camera_mode()
-            return True
-
-        self.ui.write_log("SYS: Görsel moda geçiyorum.")
-        if hasattr(self.ui, "start_camera_mode"):
-            self.ui.start_camera_mode(camera_index=None)
-        return True
-
-    def _start_direct_camera_vision(self, text: str, source: str = "voice") -> bool:
-        now = time.time()
-        if now - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0) < 3.5:
-            return True
-        self._last_direct_camera_vision_ts = now
-
-        clean_text = (text or "Kameradan gördüğünü analiz et.").strip()
-        if hasattr(self.ui, "start_camera_mode"):
-            self.ui.start_camera_mode(camera_index=None)
-        self.ui.write_log("SYS: Görsel moda geçiyorum; kamera analizi başlatıldı.")
-
-        threading.Thread(
-            target=screen_process,
-            kwargs={
-                "parameters": {"angle": "camera", "text": clean_text},
-                "response": None,
-                "player": self.ui,
-                "session_memory": None,
-            },
-            daemon=True,
-        ).start()
-        return True
-
     def _handle_friday_mode_command(self, text: str, source: str = "text") -> bool:
         t = self._norm_text(text)
         if not t:
             return False
 
-        camera_action = self._is_camera_direct_command(t)
-        if camera_action:
-            self._set_camera_mode_local(camera_action, source=source)
+        camera_close_phrases = (
+            "/camera-off", "/kamera-kapat",
+            "kamerayi kapat", "kamerayı kapat",
+            "kamera kapat", "kamera modunu kapat",
+            "camera off", "close camera", "stop camera"
+        )
+        camera_open_phrases = (
+            "/camera", "/kamera",
+            "kamerayi ac", "kamerayı aç",
+            "kamera ac", "kamera aç",
+            "kamera modunu ac", "kamera modunu aç",
+            "kamerayi kullan", "kamerayı kullan",
+            "camera on", "open camera", "start camera"
+        )
+
+        if any(p in t for p in camera_close_phrases):
+            if hasattr(self.ui, "stop_camera_mode"):
+                self.ui.stop_camera_mode()
+            return True
+
+        if any(p in t for p in camera_open_phrases):
+            if hasattr(self.ui, "start_camera_mode"):
+                self.ui.start_camera_mode(camera_index=None)
             return True
 
         standby_phrases = (
@@ -770,11 +644,6 @@ class JarvisLive:
 
     def _on_text_command(self, text: str):
         if self._handle_friday_mode_command(text, source="text"):
-            self._suppress_model_output(2.5)
-            return
-        if self._looks_like_camera_vision_request(text):
-            self._suppress_model_output(5.5)
-            self._start_direct_camera_vision(text, source="text")
             return
         if self._handle_security_center_direct_command(text):
             return
@@ -880,18 +749,7 @@ class JarvisLive:
         result = "Done."
 
         try:
-            if name == "friday_camera_mode":
-                action = str(args.get("action") or "open").lower().strip()
-                if action in ("close", "off", "stop", "kapat"):
-                    if hasattr(self.ui, "stop_camera_mode"):
-                        self.ui.stop_camera_mode()
-                    result = "Camera vision mode closed. Do not add extra commentary."
-                else:
-                    if hasattr(self.ui, "start_camera_mode"):
-                        self.ui.start_camera_mode(camera_index=None)
-                    result = "Camera vision mode opened. Do not add extra commentary."
-
-            elif name == "open_app":
+            if name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 
@@ -921,22 +779,16 @@ class JarvisLive:
 
             elif name == "screen_process":
                 angle = str(args.get("angle") or "screen").lower().strip()
+                if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
+                    self.ui.start_camera_mode(camera_index=None)
 
-                # If the local voice interceptor already started camera analysis,
-                # ignore Gemini's duplicate tool call for a few seconds.
-                if angle == "camera" and (time.time() - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0)) < 4.5:
-                    result = "Camera vision analysis is already running. Stay silent."
-                else:
-                    if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
-                        self.ui.start_camera_mode(camera_index=None)
-
-                    threading.Thread(
-                        target=screen_process,
-                        kwargs={"parameters": args, "response": None,
-                                "player": self.ui, "session_memory": None},
-                        daemon=True
-                    ).start()
-                    result = "Vision module activated. Stay completely silent — vision module will speak directly."
+                threading.Thread(
+                    target=screen_process,
+                    kwargs={"parameters": args, "response": None,
+                            "player": self.ui, "session_memory": None},
+                    daemon=True
+                ).start()
+                result = "Vision module activated. Stay completely silent — vision module will speak directly."
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
@@ -1171,19 +1023,6 @@ class JarvisLive:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
                                 in_buf.append(txt)
-                                live_in = " ".join(in_buf).strip()
-
-                                # Handle camera commands / visual questions as soon as the
-                                # input transcript is visible, before Gemini's normal answer
-                                # audio can continue saying the wrong thing.
-                                if live_in and not self._voice_local_handled:
-                                    if self._handle_friday_mode_command(live_in, source="voice-live"):
-                                        self._voice_local_handled = True
-                                        self._suppress_model_output(4.0)
-                                    elif self._looks_like_camera_vision_request(live_in):
-                                        self._voice_local_handled = True
-                                        self._suppress_model_output(6.0)
-                                        self._start_direct_camera_vision(live_in, source="voice-live")
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1192,21 +1031,13 @@ class JarvisLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
-                                if not self._voice_local_handled:
-                                    if self._handle_friday_mode_command(full_in, source="voice"):
-                                        self._voice_local_handled = True
-                                        self._suppress_model_output(4.0)
-                                    elif self._looks_like_camera_vision_request(full_in):
-                                        self._voice_local_handled = True
-                                        self._suppress_model_output(6.0)
-                                        self._start_direct_camera_vision(full_in, source="voice")
+                                self._handle_friday_mode_command(full_in, source="voice")
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
-                            if full_out and not self._is_model_audio_suppressed() and not self._voice_local_handled:
+                            if full_out:
                                 self.ui.write_log(f"FRIDAY: {full_out}")
                             out_buf = []
-                            self._voice_local_handled = False
 
                     if response.tool_call:
                         fn_responses = []
@@ -1256,7 +1087,7 @@ class JarvisLive:
                         self.set_speaking(False)
                         self._turn_done_event.clear()
                     continue
-                if self.ui.standby or self._is_model_audio_suppressed():
+                if self.ui.standby:
                     self.set_speaking(False)
                     continue
                 self.set_speaking(True)
@@ -1296,15 +1127,6 @@ class JarvisLive:
                     print("[FRIDAY] ✅ Connected.")
                     self.ui.set_state("STANDBY" if self.ui.standby else "LISTENING")
                     self.ui.write_log("SYS: MEDPOV FRIDAY online.")
-
-                    # Warm up the separate Vision Live session in the background.
-                    # First camera analysis is much faster after this.
-                    threading.Thread(
-                        target=warmup_session,
-                        kwargs={"player": self.ui},
-                        daemon=True,
-                        name="FRIDAYVisionWarmup",
-                    ).start()
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
