@@ -2863,6 +2863,48 @@ class MainWindow(QMainWindow):
         lay.addWidget(_sec("DIRECT COMMAND", "⌲"))
         lay.addLayout(self._build_input_row())
 
+        quick_tools = QHBoxLayout(); quick_tools.setSpacing(8)
+        self._quick_map_btn = QPushButton("🗺  OPEN MAP")
+        self._quick_map_btn.setFixedHeight(32)
+        self._quick_map_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        self._quick_map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._quick_map_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(40,233,255,0.11);
+                color: {C.PRI};
+                border: 1px solid rgba(40,233,255,0.38);
+                border-radius: 11px;
+            }}
+            QPushButton:hover {{
+                background: rgba(40,233,255,0.24);
+                color: {C.WHITE};
+                border: 1px solid rgba(40,233,255,0.72);
+            }}
+        """)
+        self._quick_map_btn.clicked.connect(self._open_security_map_quick)
+        quick_tools.addWidget(self._quick_map_btn)
+
+        self._quick_camera_open_btn = QPushButton("📷  OPEN CAMERA")
+        self._quick_camera_open_btn.setFixedHeight(32)
+        self._quick_camera_open_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        self._quick_camera_open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._quick_camera_open_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(34,242,168,0.11);
+                color: {C.GREEN};
+                border: 1px solid rgba(34,242,168,0.36);
+                border-radius: 11px;
+            }}
+            QPushButton:hover {{
+                background: rgba(34,242,168,0.23);
+                color: {C.WHITE};
+                border: 1px solid rgba(34,242,168,0.70);
+            }}
+        """)
+        self._quick_camera_open_btn.clicked.connect(self._open_camera_quick)
+        quick_tools.addWidget(self._quick_camera_open_btn)
+        lay.addLayout(quick_tools)
+
         buttons = QHBoxLayout(); buttons.setSpacing(8)
         self._standby_btn = QPushButton("⏻  STANDBY MODE")
         self._standby_btn.setFixedHeight(34)
@@ -3054,7 +3096,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color};")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F6] Camera  ·  [F11] Fullscreen", C.TEXT_MED))
+        lay.addWidget(_fl("[F4] Mute  ·  [F6] Camera Toggle  ·  Map/Camera Buttons  ·  [F11] Fullscreen", C.TEXT_MED))
         lay.addStretch()
         lay.addWidget(_fl("© MEDPOV Technologies", C.TEXT_DIM))
         lay.addWidget(_fl("|", C.BORDER_A))
@@ -3193,6 +3235,25 @@ class MainWindow(QMainWindow):
 
     def camera_disabled_message(self) -> str:
         return self._camera_disabled_message()
+
+    def _open_camera_quick(self):
+        """Open FRIDAY camera vision directly from the UI button."""
+        if not self.camera_access_enabled():
+            self._log.append_log("SYS: " + self._camera_disabled_message())
+            return
+        try:
+            self.start_camera_mode()
+            self._log.append_log("SYS: Camera quick button requested live vision.")
+        except Exception as exc:
+            self._log.append_log(f"ERR: Camera quick button failed — {exc}")
+
+    def _open_security_map_quick(self):
+        """Open the Security Center global map directly from the UI button."""
+        try:
+            self.start_security_map(mode="world", data={}, focus="")
+            self._log.append_log("SYS: Map quick button requested global map.")
+        except Exception as exc:
+            self._log.append_log(f"ERR: Map quick button failed — {exc}")
 
     def _send(self):
         txt = self._input.text().strip()
@@ -4981,6 +5042,71 @@ def _mp_map_draw_city_labels(self, p: QPainter, rect: QRectF):
     p.restore()
 
 
+def _mp_map_draw_threat_legend(self, p: QPainter, rect: QRectF):
+    """Draw Threat Level legend with auto height so Critical never overflows."""
+    items = [
+        (C.GREEN, "Live User"),
+        (C.PRI, "Low"),
+        (C.ACC2, "Medium"),
+        ("#ff6b35", "High"),
+        (C.RED, "Critical"),
+    ]
+
+    box_w = 176.0
+    pad_x = 18.0
+    title_h = 18.0
+    title_top = 13.0
+    first_row_y = title_top + title_h + 19.0
+    row_gap = 22.0
+    bottom_pad = 22.0
+    box_h = first_row_y + (len(items) * row_gap) + bottom_pad - 6.0
+
+    leg = QRectF(
+        rect.left() + 18.0,
+        rect.bottom() - box_h - 20.0,
+        box_w,
+        box_h,
+    )
+
+    p.save()
+    p.setPen(QPen(qcol(C.PRI, 78), 1))
+    p.setBrush(QBrush(qcol("#061421", 226)))
+    p.drawRoundedRect(leg, 14, 14)
+
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 235))
+    p.drawText(
+        QRectF(leg.left() + pad_x, leg.top() + title_top, leg.width() - pad_x * 2, title_h),
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        "Threat Level",
+    )
+
+    p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+    y = leg.top() + first_row_y
+    for color, label in items:
+        dot = QPointF(leg.left() + pad_x + 5, y + 7)
+
+        glow = QRadialGradient(dot, 10)
+        glow.setColorAt(0, qcol(color, 145))
+        glow.setColorAt(1, qcol(color, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(glow))
+        p.drawEllipse(dot, 10, 10)
+
+        p.setBrush(QBrush(qcol(color, 240)))
+        p.drawEllipse(dot, 4.2, 4.2)
+
+        p.setPen(qcol(C.TEXT, 222))
+        p.drawText(
+            QRectF(leg.left() + pad_x + 21, y - 2, leg.width() - pad_x * 2 - 24, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            label,
+        )
+        y += row_gap
+
+    p.restore()
+
+
 def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
     data = getattr(self, "_security_map_data", {}) or {}
     mode = str(getattr(self, "_security_map_active_mode", "world") or "world").upper()
@@ -5009,24 +5135,8 @@ def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
     p.setPen(qcol(C.TEXT_DIM, 205))
     p.drawText(QRectF(badge.left() + 16, badge.top() + 53, badge.width() - 28, 18), Qt.AlignmentFlag.AlignLeft, str(getattr(self, "_security_map_notice", ""))[:68])
 
-    # Legend.
-    leg = QRectF(rect.left() + 18, rect.bottom() - 156, 166, 132)
-    p.setPen(QPen(qcol(C.PRI, 72), 1))
-    p.setBrush(QBrush(qcol("#061421", 226)))
-    p.drawRoundedRect(leg, 13, 13)
-    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
-    p.setPen(qcol("#ffffff", 230))
-    p.drawText(QRectF(leg.left() + 14, leg.top() + 12, 140, 18), Qt.AlignmentFlag.AlignLeft, "Threat Level")
-    items = [(C.GREEN, "Live User"), (C.PRI, "Low"), (C.ACC2, "Medium"), ("#ff6b35", "High"), (C.RED, "Critical")]
-    yy = leg.top() + 39
-    p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-    for color, label in items:
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(qcol(color, 230)))
-        p.drawEllipse(QPointF(leg.left() + 18, yy + 5), 4.2, 4.2)
-        p.setPen(qcol(C.TEXT, 218))
-        p.drawText(QRectF(leg.left() + 31, yy - 2, 120, 18), Qt.AlignmentFlag.AlignLeft, label)
-        yy += 22
+    # Legend. Auto-height fixes the Critical row overflow.
+    _mp_map_draw_threat_legend(self, p, rect)
 
     # Bottom status pill. It is moved left so the mini FRIDAY hologram can sit at bottom-right.
     mini_reserve = max(230.0, min(float(w), float(h)) * 0.30)
