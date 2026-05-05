@@ -22,7 +22,7 @@ from actions.weather_report    import weather_action
 from actions.send_message      import send_message
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process, warmup_session
+from actions.screen_processor  import screen_process, warmup_session, cancel_vision_requests
 from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
@@ -37,11 +37,20 @@ import os
 
 # --- MEDPOV FRIDAY runtime settings bridge ---
 try:
-    from tools.friday_settings_store import bootstrap_environment, get_friday_voice_name, get_speech_config, get_gemini_model
+    from tools.friday_settings_store import (
+        bootstrap_environment,
+        get_friday_voice_name,
+        get_speech_config,
+        get_gemini_model,
+        get_friday_response_language,
+        get_friday_response_language_instruction,
+    )
     FRIDAY_SETTINGS = bootstrap_environment()
     FRIDAY_VOICE_NAME = get_friday_voice_name()
     FRIDAY_SPEECH_CONFIG = get_speech_config()
     FRIDAY_GEMINI_MODEL = get_gemini_model()
+    FRIDAY_RESPONSE_LANGUAGE = get_friday_response_language()
+    FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = get_friday_response_language_instruction()
 except Exception as _friday_settings_error:
     print(f"[FRIDAY] Settings bridge warning: {_friday_settings_error}")
     FRIDAY_VOICE_NAME = os.environ.get("FRIDAY_VOICE_NAME", "Aoede")
@@ -50,6 +59,8 @@ except Exception as _friday_settings_error:
         "voice_config": {"prebuilt_voice_config": {"voice_name": FRIDAY_VOICE_NAME}},
     }
     FRIDAY_GEMINI_MODEL = os.environ.get("FRIDAY_GEMINI_MODEL") or os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash-native-audio-preview-12-2025"
+    FRIDAY_RESPONSE_LANGUAGE = os.environ.get("FRIDAY_RESPONSE_LANGUAGE", "tr")
+    FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = "Her zaman Türkçe cevap ver." if FRIDAY_RESPONSE_LANGUAGE == "tr" else "Always answer in English."
 # --- /MEDPOV FRIDAY runtime settings bridge ---
 
 
@@ -587,6 +598,7 @@ class JarvisLive:
         self._suppress_model_audio_until = 0.0
         self._voice_local_handled = False
         self._last_direct_camera_vision_ts = 0.0
+        self._last_direct_camera_vision_text = ""
         self._last_camera_mode_command_ts = 0.0
 
     def _norm_text(self, text: str) -> str:
@@ -682,6 +694,7 @@ class JarvisLive:
 
         action = (action or "open").lower().strip()
         if action == "close":
+            cancel_vision_requests()
             if hasattr(self.ui, "stop_camera_mode"):
                 self.ui.stop_camera_mode()
             return True
@@ -693,11 +706,19 @@ class JarvisLive:
 
     def _start_direct_camera_vision(self, text: str, source: str = "voice") -> bool:
         now = time.time()
-        if now - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0) < 3.5:
+        clean_text = (text or "Kameradan gördüğünü analiz et.").strip()
+        norm_text = self._norm_text(clean_text)
+        # Partial voice transcripts may repeat the exact same sentence. Ignore only ultra-fast duplicates,
+        # but let a fresh camera command cancel the old analysis immediately.
+        if (
+            now - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0) < 1.0
+            and norm_text == str(getattr(self, "_last_direct_camera_vision_text", "") or "")
+        ):
             return True
         self._last_direct_camera_vision_ts = now
+        self._last_direct_camera_vision_text = norm_text
+        cancel_vision_requests()
 
-        clean_text = (text or "Kameradan gördüğünü analiz et.").strip()
         if hasattr(self.ui, "start_camera_mode"):
             self.ui.start_camera_mode(camera_index=None)
         self.ui.write_log("SYS: Görsel moda geçiyorum; kamera analizi başlatıldı.")
@@ -834,7 +855,13 @@ class JarvisLive:
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
-        parts = [time_ctx]
+        lang_ctx = (
+            "[RESPONSE LANGUAGE]\n"
+            f"{FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION}\n"
+            "This rule has priority over the base prompt and over tool/model language drift.\n"
+        )
+
+        parts = [time_ctx, lang_ctx]
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -883,6 +910,7 @@ class JarvisLive:
             if name == "friday_camera_mode":
                 action = str(args.get("action") or "open").lower().strip()
                 if action in ("close", "off", "stop", "kapat"):
+                    cancel_vision_requests()
                     if hasattr(self.ui, "stop_camera_mode"):
                         self.ui.stop_camera_mode()
                     result = "Camera vision mode closed. Do not add extra commentary."
@@ -928,8 +956,10 @@ class JarvisLive:
                     self._suppress_model_output(7.0)
                     result = "Camera vision analysis is already running silently. Do not speak or add commentary."
                 else:
-                    if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
-                        self.ui.start_camera_mode(camera_index=None)
+                    if angle == "camera":
+                        cancel_vision_requests()
+                        if hasattr(self.ui, "start_camera_mode"):
+                            self.ui.start_camera_mode(camera_index=None)
 
                     threading.Thread(
                         target=screen_process,

@@ -5,5 +5,6 @@
   "friday_voice_language": "tr-TR",
   "friday_voice_profile": "female_soft",
   "friday_character_gender": "female",
+  "friday_response_language": "tr",
   "gemini_live_model": "gemini-2.5-flash-native-audio-preview-12-2025"
 }

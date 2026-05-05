@@ -17,6 +17,7 @@ DEFAULT_SECURITY_CENTER_API_KEY = ""
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_VOICE = "Aoede"
 DEFAULT_LANGUAGE = "tr-TR"
+DEFAULT_RESPONSE_LANGUAGE = "tr"
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
     {"name": "Aoede", "group": "Kadın", "label": "Aoede · Kadın / soft"},
@@ -39,6 +40,9 @@ DEFAULTS: Dict[str, Any] = {
         "name": DEFAULT_VOICE,
         "language": DEFAULT_LANGUAGE,
         "character_gender": "female",
+    },
+    "assistant": {
+        "response_language": DEFAULT_RESPONSE_LANGUAGE,
     },
     "security_center": {
         "base_url": DEFAULT_SECURITY_CENTER_BASE_URL,
@@ -130,6 +134,8 @@ def load_settings() -> Dict[str, Any]:
         settings["security_center"]["api_key"] = DEFAULT_SECURITY_CENTER_API_KEY
     settings.setdefault("voice", {}).setdefault("name", DEFAULT_VOICE)
     settings.setdefault("voice", {}).setdefault("language", DEFAULT_LANGUAGE)
+    settings.setdefault("assistant", {}).setdefault("response_language", DEFAULT_RESPONSE_LANGUAGE)
+    settings["assistant"]["response_language"] = normalize_response_language(settings["assistant"].get("response_language"))
     settings.setdefault("gemini", {}).setdefault("model", DEFAULT_GEMINI_MODEL)
     return settings
 
@@ -141,6 +147,9 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged.setdefault("security_center", {})["base_url"] = base
     merged["security_center"]["api_url"] = api_url_from_base(base)
     merged["security_center"]["timeout"] = int(merged["security_center"].get("timeout") or 25)
+    merged.setdefault("assistant", {})["response_language"] = normalize_response_language(
+        merged.get("assistant", {}).get("response_language")
+    )
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
     _mirror_legacy_files(merged)
@@ -157,6 +166,9 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
     female_names = {"Aoede", "Leda", "Kore", "Zephyr", "Callirrhoe", "Autonoe"}
     api["friday_voice_profile"] = "female_soft" if api["friday_voice_name"] in female_names else "male"
     api["friday_character_gender"] = "female" if api["friday_voice_name"] in female_names else "male"
+    api["friday_response_language"] = normalize_response_language(
+        settings.get("assistant", {}).get("response_language")
+    )
     if gemini.get("api_key"):
         api["gemini_api_key"] = str(gemini.get("api_key") or "")
         api["GOOGLE_API_KEY"] = str(gemini.get("api_key") or "")
@@ -172,12 +184,42 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
     SECURITY_CENTER_PATH.write_text(json.dumps(sec, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def normalize_response_language(value: Any) -> str:
+    raw = str(value or DEFAULT_RESPONSE_LANGUAGE).strip().lower()
+    if raw in {"en", "eng", "english", "ing", "ingilizce", "en-us", "en-gb"}:
+        return "en"
+    if raw in {"tr", "turkish", "turkce", "türkçe", "tr-tr"}:
+        return "tr"
+    return DEFAULT_RESPONSE_LANGUAGE
+
+
 def get_friday_voice_name() -> str:
     return str(load_settings().get("voice", {}).get("name") or DEFAULT_VOICE)
 
 
 def get_friday_voice_language() -> str:
     return str(load_settings().get("voice", {}).get("language") or DEFAULT_LANGUAGE)
+
+
+def get_friday_response_language() -> str:
+    return normalize_response_language(load_settings().get("assistant", {}).get("response_language"))
+
+
+def get_friday_response_language_label() -> str:
+    return "English" if get_friday_response_language() == "en" else "Türkçe"
+
+
+def get_friday_response_language_instruction() -> str:
+    lang = get_friday_response_language()
+    if lang == "en":
+        return (
+            "Always answer in English. Keep tool results, camera analysis, and normal replies in English. "
+            "If the user speaks Turkish, understand it but reply in English unless they explicitly ask for a translation."
+        )
+    return (
+        "Her zaman Türkçe cevap ver. Araç sonuçlarını, kamera analizini ve normal cevapları Türkçe tut. "
+        "Görüntü/model çıktısı İngilizce gelse bile kullanıcıya doğal Türkçe olarak aktar."
+    )
 
 
 def get_speech_config() -> Dict[str, Any]:
@@ -213,6 +255,8 @@ def bootstrap_environment() -> Dict[str, Any]:
     voice = str(settings.get("voice", {}).get("name") or DEFAULT_VOICE).strip()
     if voice:
         os.environ["FRIDAY_VOICE_NAME"] = voice
+    response_language = normalize_response_language(settings.get("assistant", {}).get("response_language"))
+    os.environ["FRIDAY_RESPONSE_LANGUAGE"] = response_language
     return settings
 
 
@@ -236,6 +280,7 @@ def save_gemini_api_key_everywhere(api_key: str, os_system: str = "windows") -> 
     api.setdefault("friday_voice_language", get_friday_voice_language())
     api.setdefault("friday_voice_profile", "female_soft")
     api.setdefault("friday_character_gender", "female")
+    api.setdefault("friday_response_language", get_friday_response_language())
     api.setdefault("gemini_live_model", get_gemini_model())
     api["os_system"] = os_system or api.get("os_system", "windows")
 

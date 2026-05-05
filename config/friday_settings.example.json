@@ -4,6 +4,9 @@
     "language": "tr-TR",
     "character_gender": "female"
   },
+  "assistant": {
+    "response_language": "tr"
+  },
   "security_center": {
     "base_url": "https://siteadi.com/security-center",
     "api_url": "https://siteadi.com/security-center/admin/api/remote-access.php",

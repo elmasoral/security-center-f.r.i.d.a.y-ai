@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import urllib.error
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from .friday_settings_store import (
     DEFAULT_GEMINI_MODEL,
     VOICE_OPTIONS,
+    normalize_response_language,
     api_url_from_base,
     load_settings,
     normalize_security_center_base_url,
@@ -117,7 +118,7 @@ class FridaySettingsDialog(QDialog):
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         title.setStyleSheet("color:#ffb86b; padding: 4px 0 8px 0;")
         root.addWidget(title)
-        subtitle = QLabel("Ses, Security Center bağlantısı ve Gemini API ayarlarını buradan güncelleyebilirsin.")
+        subtitle = QLabel("Ses, cevap dili, Security Center bağlantısı ve Gemini API ayarlarını buradan güncelleyebilirsin.")
         subtitle.setStyleSheet("color:#8fa1b8; padding-bottom:8px;")
         root.addWidget(subtitle)
         tabs = QTabWidget()
@@ -158,11 +159,15 @@ class FridaySettingsDialog(QDialog):
         for item in VOICE_OPTIONS:
             self.voice_combo.addItem(item["label"], item["name"])
         self.voice_language = QLineEdit("tr-TR")
-        hint = QLabel("Not: Ses değişikliği Gemini Live oturumu yeniden açıldığında aktif olur. Friday'i kapatıp açmak en temiz sonuç verir.")
+        self.response_language_combo = QComboBox()
+        self.response_language_combo.addItem("Türkçe cevap ver", "tr")
+        self.response_language_combo.addItem("Answer in English", "en")
+        hint = QLabel("Not: Ses ve cevap dili değişikliği Gemini Live oturumu yeniden açıldığında aktif olur. Friday'i kapatıp açmak en temiz sonuç verir.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#8fa1b8;")
         form.addRow("FRIDAY sesi", self.voice_combo)
-        form.addRow("Dil kodu", self.voice_language)
+        form.addRow("Ses dil kodu", self.voice_language)
+        form.addRow("Cevap dili", self.response_language_combo)
         form.addRow("", hint)
         return w
 
@@ -213,6 +218,11 @@ class FridaySettingsDialog(QDialog):
         if idx >= 0:
             self.voice_combo.setCurrentIndex(idx)
         self.voice_language.setText(str(voice.get("language") or "tr-TR"))
+        assistant = s.get("assistant", {})
+        response_lang = normalize_response_language(assistant.get("response_language"))
+        response_idx = self.response_language_combo.findData(response_lang)
+        if response_idx >= 0:
+            self.response_language_combo.setCurrentIndex(response_idx)
         sc = s.get("security_center", {})
         self.sc_base_url.setText(str(sc.get("base_url") or "https://medpov.com/main/security-center"))
         self.sc_api_key.setText(str(sc.get("api_key") or ""))
@@ -235,6 +245,7 @@ class FridaySettingsDialog(QDialog):
         voice_name = str(self.voice_combo.currentData() or self.voice_combo.currentText() or "Aoede")
         return {
             "voice": {"name": voice_name, "language": self.voice_language.text().strip() or "tr-TR", "character_gender": "female" if voice_name in female_names else "male"},
+            "assistant": {"response_language": normalize_response_language(self.response_language_combo.currentData())},
             "security_center": {"base_url": base, "api_url": api_url_from_base(base), "api_key": self.sc_api_key.text().strip(), "timeout": timeout},
             "gemini": {"api_key": self.gemini_api_key.text().strip(), "model": self.gemini_model.text().strip() or DEFAULT_GEMINI_MODEL},
         }

@@ -1011,8 +1011,8 @@ class HudCanvas(QWidget):
                 return False
 
             try:
-                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
                 self._camera.set(cv2.CAP_PROP_FPS, 30)
                 self._camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
@@ -1079,8 +1079,8 @@ class HudCanvas(QWidget):
             ).copy()
 
             # Vision modülü ayrı kamera açmaya çalışmasın diye JPEG snapshot sakla.
-            if force_snapshot or (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
-                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+            if force_snapshot or (self._tick % 3 == 0) or self._camera_snapshot_bytes is None:
+                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 if ok_jpg:
                     with self._camera_lock:
                         self._camera_snapshot_bytes = jpg.tobytes()
@@ -1143,7 +1143,7 @@ class HudCanvas(QWidget):
             if self._camera is not None:
                 self._prime_camera_snapshot(max_reads=1)
 
-            time.sleep(0.03)
+            time.sleep(0.015)
 
         raise RuntimeError(self._camera_error or "Kamera frame hazır değil")
 
@@ -3203,6 +3203,7 @@ class MainWindow(QMainWindow):
                 api_data.setdefault("friday_voice_language", "tr-TR")
                 api_data.setdefault("friday_voice_profile", "female_soft")
                 api_data.setdefault("friday_character_gender", "female")
+                api_data.setdefault("friday_response_language", "tr")
                 api_data.setdefault(
                     "gemini_live_model",
                     "gemini-2.5-flash-native-audio-preview-12-2025"
@@ -3227,6 +3228,9 @@ class MainWindow(QMainWindow):
                 settings_data["voice"].setdefault("name", "Aoede")
                 settings_data["voice"].setdefault("language", "tr-TR")
                 settings_data["voice"].setdefault("character_gender", "female")
+
+                settings_data.setdefault("assistant", {})
+                settings_data["assistant"].setdefault("response_language", "tr")
 
                 settings_data.setdefault("gemini", {})
                 settings_data["gemini"]["api_key"] = key

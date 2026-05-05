@@ -28,10 +28,16 @@ except ImportError:
     _MSS = False
     
 try:
-    from tools.friday_settings_store import get_friday_voice_name
+    from tools.friday_settings_store import (
+        get_friday_voice_name,
+        get_friday_response_language_instruction,
+    )
 except Exception:
     def get_friday_voice_name() -> str:
-        return "Aoede"    
+        return "Aoede"
+
+    def get_friday_response_language_instruction() -> str:
+        return "Her zaman Türkçe cevap ver."
 
 try:
     import PIL.Image
@@ -83,16 +89,25 @@ _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
 
-_IMG_MAX_W = 512
-_IMG_MAX_H = 288
-_JPEG_Q    = 55
+_IMG_MAX_W = 640
+_IMG_MAX_H = 360
+_JPEG_Q    = 60
 
 _SYSTEM_PROMPT = (
     "You are F.R.I.D.A.Y, MEDPOV's private desktop AI assistant. "
     "Analyze the provided image with precision and intelligence. "
     "Be concise and direct. "
-    "Use the user's language when possible."
+    "Strictly obey the configured response language. "
+    "If the image contains an object in the user's hand, identify the most likely object first, "
+    "then give one short supporting detail."
 )
+
+
+def _vision_language_instruction() -> str:
+    try:
+        return get_friday_response_language_instruction()
+    except Exception:
+        return "Her zaman Türkçe cevap ver."
 
 
 def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]:
@@ -222,6 +237,8 @@ class _VisionSession:
         self._ready_evt:  threading.Event                     = threading.Event()
         self._player                                           = None
         self._lock:       threading.Lock                       = threading.Lock()
+        self._request_id: int                                   = 0
+        self._discard_response_until_turn_complete: bool        = False
 
     def start(self, player=None, timeout: float = 12.0) -> None:
         with self._lock:
@@ -249,13 +266,46 @@ class _VisionSession:
         if not self._loop or not self._out_queue:
             print("[Vision] ⚠️  Session not started — dropping request")
             return
+        with self._lock:
+            self._request_id += 1
+            request_id = self._request_id
         asyncio.run_coroutine_threadsafe(
-            self._out_queue.put((image_bytes, mime_type, user_text)),
+            self._queue_latest_request(request_id, image_bytes, mime_type, user_text),
             self._loop,
         )
 
+    def cancel_pending(self) -> None:
+        """Cancel queued vision work and mute any stale response still arriving."""
+        with self._lock:
+            self._request_id += 1
+        if self._loop:
+            asyncio.run_coroutine_threadsafe(self._cancel_now(), self._loop)
+
     def is_ready(self) -> bool:
         return self._session is not None
+
+    async def _drain_queue(self, queue: Optional[asyncio.Queue]) -> None:
+        if queue is None:
+            return
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            except Exception:
+                break
+
+    async def _cancel_now(self) -> None:
+        self._discard_response_until_turn_complete = True
+        await self._drain_queue(self._out_queue)
+        await self._drain_queue(self._audio_in)
+
+    async def _queue_latest_request(self, request_id: int, image_bytes: bytes, mime_type: str, user_text: str) -> None:
+        # Latest-wins: a new visual command immediately removes old queued frames and old audio.
+        self._discard_response_until_turn_complete = True
+        await self._drain_queue(self._out_queue)
+        await self._drain_queue(self._audio_in)
+        await self._out_queue.put((request_id, image_bytes, mime_type, user_text))
 
     def _run_event_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -273,7 +323,7 @@ class _VisionSession:
         config = gtypes.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
-            system_instruction=_SYSTEM_PROMPT,
+            system_instruction=_SYSTEM_PROMPT + "\n" + _vision_language_instruction(),
             speech_config=gtypes.SpeechConfig(
                 voice_config=gtypes.VoiceConfig(
                     prebuilt_voice_config=gtypes.PrebuiltVoiceConfig(
@@ -313,7 +363,10 @@ class _VisionSession:
 
     async def _send_loop(self) -> None:
         while True:
-            image_bytes, mime_type, user_text = await self._out_queue.get()
+            request_id, image_bytes, mime_type, user_text = await self._out_queue.get()
+            if request_id != self._request_id:
+                print(f"[Vision] ⏭️  Skipping stale request #{request_id}")
+                continue
             if not self._session:
                 print("[Vision] ⚠️  No session — dropping image")
                 continue
@@ -328,7 +381,9 @@ class _VisionSession:
                     },
                     turn_complete=True,
                 )
-                print(f"[Vision] 📤 Sent {len(image_bytes):,} bytes — '{user_text[:60]}'")
+                # New turn has been submitted; from this point incoming audio belongs to the latest command.
+                self._discard_response_until_turn_complete = False
+                print(f"[Vision] 📤 Sent latest #{request_id} {len(image_bytes):,} bytes")
             except Exception as e:
                 print(f"[Vision] ⚠️  Send error: {e}")
 
@@ -336,19 +391,23 @@ class _VisionSession:
         transcript: list[str] = []
         try:
             async for response in self._session.receive():
-                if response.data:
+                if response.data and not self._discard_response_until_turn_complete:
                     await self._audio_in.put(response.data)
 
                 sc = response.server_content
                 if not sc:
                     continue
 
-                if sc.output_transcription and sc.output_transcription.text:
+                if (not self._discard_response_until_turn_complete) and sc.output_transcription and sc.output_transcription.text:
                     chunk = sc.output_transcription.text.strip()
                     if chunk:
                         transcript.append(chunk)
 
                 if sc.turn_complete:
+                    if self._discard_response_until_turn_complete:
+                        transcript = []
+                        self._discard_response_until_turn_complete = False
+                        continue
                     if transcript and self._player:
                         full = re.sub(r"\s+", " ", " ".join(transcript)).strip()
                         if full:
@@ -371,6 +430,8 @@ class _VisionSession:
         try:
             while True:
                 chunk = await self._audio_in.get()
+                if self._discard_response_until_turn_complete:
+                    continue
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[Vision] ❌ Play error: {e}")
@@ -434,8 +495,9 @@ def screen_process(
                     # UI zaten kamerayı açtı; aynı cihazı worker thread içinde tekrar açma.
                     # İlk frame için biraz daha bekliyoruz. Bu, Windows webcam sürücülerinde
                     # çift VideoCapture kaynaklı sessiz kapanmaları engeller.
-                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=3.0)
-                    print(f"[Vision] 📷 UI camera snapshot: {len(image_bytes):,} bytes")
+                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=0.75)
+                    image_bytes, mime_type = _compress(image_bytes, "JPEG")
+                    print(f"[Vision] 📷 UI camera snapshot compressed: {len(image_bytes):,} bytes")
                 except Exception as ui_exc:
                     print(f"[Vision] ❌ UI camera snapshot failed: {ui_exc}")
                     try:
@@ -453,8 +515,17 @@ def screen_process(
         print(f"[Vision] ❌ Capture error: {e}")
         return False
 
-    _session.analyze(image_bytes, mime_type, user_text)
+    language_guard = _vision_language_instruction()
+    analysis_text = f"{language_guard}\n\nUser request: {user_text}".strip()
+    _session.analyze(image_bytes, mime_type, analysis_text)
     return True
+
+
+def cancel_vision_requests() -> None:
+    try:
+        _session.cancel_pending()
+    except Exception as e:
+        print(f"[Vision] ⚠️  Cancel failed: {e}")
 
 
 def warmup_session(player=None) -> None:
