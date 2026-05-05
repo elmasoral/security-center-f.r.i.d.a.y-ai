@@ -1,3 +1,96 @@
+# MEDPOV F.R.I.D.A.Y v2.8.2 — OpenAI Realtime GA Ses Şeması Düzeltmesi
+
+Bu patch v2.8.1 üzerinde OpenAI Realtime bağlantısında görülen iki kritik problemi düzeltir:
+
+- `Unknown parameter: session.output_modalities` hatası
+- OpenAI Realtime tarafında kullanıcının söylediklerinin Command Log'a düşmemesi ve ses çıkışının stabil başlamaması
+
+## Ana Neden
+
+v2.8.1 içinde OpenAI Realtime bağlantısı hâlâ eski `OpenAI-Beta: realtime=v1` header'ı ile açılıyordu; fakat session payload tarafında yeni GA alanları (`session.type`, `output_modalities`, `audio.input`, `audio.output`) gönderiliyordu. Bu karışık şema bazı endpointlerde session ayarını reddediyor ve ses/araç bağlamını eksik bırakıyordu.
+
+## Yapılan Düzeltmeler
+
+- OpenAI Realtime varsayılan bağlantısı GA moda alındı.
+- Varsayılan OpenAI Realtime bağlantısından `OpenAI-Beta: realtime=v1` header'ı kaldırıldı.
+- GA session payload tekrar doğru hale getirildi:
+  - `session.type = realtime`
+  - `session.model = gpt-realtime`
+  - `session.output_modalities = ["audio"]`
+  - `session.audio.input.format = audio/pcm @ 24000`
+  - `session.audio.output.voice = seçili OpenAI sesi`
+- Eski endpoint uyumluluğu için beta fallback eklendi:
+  - GA alanları reddedilirse legacy payload `modalities`, `input_audio_format`, `output_audio_format` alanlarıyla tekrar denenir.
+- OpenAI Realtime response create event'i schema moduna göre ayrıldı:
+  - GA: `output_modalities`
+  - Beta fallback: `modalities`
+- Kullanıcı konuşması transcript event'leri için ek event adı desteği eklendi.
+- Kullanıcı konuşmaya başladığında kuyrukta kalan FRIDAY ses parçaları temizlenir; barge-in davranışı iyileştirildi.
+- Ayarlar > OpenAI sekmesinde OpenAI Realtime sesleri kadın/erkek etiketleriyle düzenlendi.
+- OpenAI Realtime için desteklenen ses listesi sadeleştirildi:
+  - Kadın tonları: `marin`, `coral`, `shimmer`, `sage`
+  - Erkek tonları: `cedar`, `alloy`, `ash`, `ballad`, `echo`, `verse`
+- Footer sürümü `v2.8.2` olarak güncellendi.
+
+## Değişen Dosyalar
+
+```txt
+main.py
+ui.py
+tools/friday_settings_store.py
+tools/friday_settings_dialog.py
+README.md
+PATCH_NOTES_TR.md
+```
+
+## Kurulum
+
+Patch içindeki dosyaları proje köküne aynı klasör yapısıyla kopyalayın.
+
+Sonra:
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+FRIDAY'i tamamen kapatıp tekrar başlatın.
+
+## Önerilen Ayar
+
+```txt
+AI Provider: OpenAI Realtime · bağımsız canlı ses + tool orchestration
+Fallback: OpenAI
+OpenAI Realtime model: gpt-realtime
+OpenAI Realtime sesi: marin veya cedar
+```
+
+## Test
+
+```txt
+Friday beni duyuyor musun?
+Kamerayı açıp bakar mısın?
+Şu an elimde ne tutuyorum?
+Kamerayı kapat.
+```
+
+Beklenen log:
+
+```txt
+SYS: OpenAI Realtime provider online.
+SYS: OpenAI Realtime audio session ready.
+You: Friday beni duyuyor musun?
+FRIDAY: ...
+```
+
+Artık şu hata gelmemelidir:
+
+```txt
+ERR: OpenAI Realtime — Unknown parameter: 'session.output_modalities'.
+```
+
+
 # MEDPOV F.R.I.D.A.Y v2.8.0 — Full OpenAI Realtime Provider Patch
 
 Bu sürüm, OpenAI modunu v2.7.x hibrit köprü yapısından çıkarıp Gemini'den bağımsız bir canlı OpenAI Realtime provider haline getirir.

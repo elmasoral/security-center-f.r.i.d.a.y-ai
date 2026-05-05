@@ -42,6 +42,19 @@ VOICE_OPTIONS: List[Dict[str, str]] = [
     {"name": "Algieba", "group": "Erkek", "label": "Algieba · Erkek / dengeli"},
 ]
 
+OPENAI_REALTIME_VOICE_OPTIONS: List[Dict[str, str]] = [
+    {"name": "marin", "group": "Kadın", "label": "marin · Kadın / en doğal · önerilen"},
+    {"name": "coral", "group": "Kadın", "label": "coral · Kadın / sıcak"},
+    {"name": "shimmer", "group": "Kadın", "label": "shimmer · Kadın / parlak"},
+    {"name": "sage", "group": "Kadın", "label": "sage · Kadın / sakin"},
+    {"name": "cedar", "group": "Erkek", "label": "cedar · Erkek / en doğal · önerilen"},
+    {"name": "alloy", "group": "Erkek", "label": "alloy · Erkek / dengeli"},
+    {"name": "ash", "group": "Erkek", "label": "ash · Erkek / tok"},
+    {"name": "ballad", "group": "Erkek", "label": "ballad · Erkek / yumuşak"},
+    {"name": "echo", "group": "Erkek", "label": "echo · Erkek / net"},
+    {"name": "verse", "group": "Erkek", "label": "verse · Erkek / anlatıcı"},
+]
+
 DEFAULTS: Dict[str, Any] = {
     "voice": {
         "name": DEFAULT_VOICE,

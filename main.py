@@ -660,6 +660,10 @@ class JarvisLive:
         self._openai_last_user_ts = 0.0
         self._openai_session_update_ok = False
         self._openai_session_update_retry = 0
+        # Realtime API schema mode. GA must not send the old OpenAI-Beta header;
+        # beta compatibility can still be selected internally if an older endpoint
+        # rejects GA fields.
+        self._openai_realtime_schema = "ga"
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -807,13 +811,12 @@ class JarvisLive:
     def _openai_realtime_session_update(self, legacy: bool = False) -> dict:
         """Build a Realtime session.update payload.
 
-        OpenAI's GA Realtime websocket currently rejects `session.type` on some
-        deployments even though a few generated docs/examples still show it.
-        Do not send `session.type`. Also use the GA audio/output_modalities
-        shape so audio deltas are actually emitted instead of text-only output.
-
-        If a deployment rejects the GA nested `audio` shape, the recv loop can
-        retry once with the older flat field names by passing legacy=True.
+        v2.8.2 defaults to the GA Realtime schema. The previous patch kept the
+        beta websocket header while sending GA fields; that is why the server
+        rejected `session.output_modalities`. In GA mode we remove the beta
+        header and send `session.type = realtime` + `output_modalities`. If an
+        older beta endpoint is detected, legacy=True uses the older flat schema
+        with `modalities` instead.
         """
         lang = "tr" if FRIDAY_RESPONSE_LANGUAGE == "tr" else "en"
         voice = self._openai_realtime_voice()
@@ -822,10 +825,9 @@ class JarvisLive:
             return {
                 "type": "session.update",
                 "session": {
-                    # Legacy beta shape: intentionally no session.type.
                     "instructions": self._openai_realtime_instructions(),
+                    "modalities": ["audio", "text"],
                     "voice": voice,
-                    "output_modalities": ["audio"],
                     "input_audio_format": "pcm16",
                     "output_audio_format": "pcm16",
                     "input_audio_transcription": {
@@ -848,14 +850,13 @@ class JarvisLive:
         return {
             "type": "session.update",
             "session": {
-                # GA shape. Do not include `type: realtime`; some endpoints
-                # answer with: Unknown parameter: 'session.type'.
+                "type": "realtime",
+                "model": self._openai_realtime_model(),
                 "instructions": self._openai_realtime_instructions(),
                 "output_modalities": ["audio"],
                 "audio": {
                     "input": {
                         "format": {"type": "audio/pcm", "rate": 24000},
-                        "noise_reduction": {"type": "near_field"},
                         "transcription": {
                             "model": "gpt-4o-mini-transcribe",
                             "language": lang,
@@ -870,7 +871,7 @@ class JarvisLive:
                         },
                     },
                     "output": {
-                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "format": {"type": "audio/pcm"},
                         "voice": voice,
                     },
                 },
@@ -904,35 +905,28 @@ class JarvisLive:
             return False
 
     def _openai_request_audio_response(self) -> dict:
-        # GA Realtime uses output_modalities. Audio output includes a transcript,
-        # so requesting both text and audio is invalid on current models.
+        if str(getattr(self, "_openai_realtime_schema", "ga") or "ga") == "beta":
+            return {"type": "response.create", "response": {"modalities": ["audio", "text"]}}
         return {"type": "response.create", "response": {"output_modalities": ["audio"]}}
 
     def _openai_retry_session_update_from_error(self, msg: str) -> bool:
-        """Retry session.update once if the endpoint rejects a schema field.
-
-        This keeps FRIDAY usable across Realtime GA/Beta schema differences
-        without reconnect loops.
-        """
+        """Retry session.update once across GA/Beta schema differences."""
         if getattr(self, "_openai_session_update_ok", False):
             return False
         low = (msg or "").lower()
         if "unknown parameter" not in low:
             return False
-        if "session.audio" in low or "session.output_modalities" in low or "session.noise_reduction" in low:
-            if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
-                return False
+        if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
+            return False
+
+        # If GA fields are rejected, downgrade the payload to the old flat beta
+        # field names inside the same socket. The next reconnect also uses the
+        # beta header via _openai_realtime_schema.
+        if "session.type" in low or "session.output_modalities" in low or "session.audio" in low or "session.noise_reduction" in low:
             self._openai_session_update_retry = 1
-            self.ui.write_log("SYS: OpenAI Realtime session şeması legacy moda alındı.")
+            self._openai_realtime_schema = "beta"
+            self.ui.write_log("SYS: OpenAI Realtime eski şema uyumluluk modu etkinleştirildi.")
             return self._queue_openai_event_threadsafe(self._openai_realtime_session_update(legacy=True))
-        if "session.type" in low:
-            # v2.8.1 no longer sends session.type. If the error came from a stale
-            # queued event, send the corrected GA update once more.
-            if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
-                return False
-            self._openai_session_update_retry = 1
-            self.ui.write_log("SYS: OpenAI Realtime session.type kaldırıldı, oturum yeniden ayarlanıyor.")
-            return self._queue_openai_event_threadsafe(self._openai_realtime_session_update(legacy=False))
         return False
 
     def _send_openai_text_turn(self, text: str) -> bool:
@@ -1147,6 +1141,9 @@ class JarvisLive:
                 continue
 
             if etype == "input_audio_buffer.speech_started":
+                # Let the user barge in naturally: stop any queued assistant
+                # audio as soon as the server detects new speech.
+                self._openai_realtime_stop_audio()
                 self.ui.set_state("LISTENING")
                 continue
 
@@ -1154,8 +1151,10 @@ class JarvisLive:
                 self.ui.set_state("THINKING")
                 continue
 
-            if etype in {"conversation.item.input_audio_transcription.completed", "conversation.item.input_audio_transcription.done"}:
+            if etype in {"conversation.item.input_audio_transcription.completed", "conversation.item.input_audio_transcription.done", "conversation.item.input_audio_transcription.finished"}:
                 txt = _clean_transcript(str(event.get("transcript") or event.get("text") or ""))
+                if not txt and isinstance(event.get("item"), dict):
+                    txt = _clean_transcript(str((event.get("item") or {}).get("transcript") or ""))
                 if txt:
                     norm = self._norm_text(txt)
                     now = time.time()
@@ -2177,19 +2176,20 @@ class JarvisLive:
         self._openai_realtime_mode = True
         model = self._openai_realtime_model()
         url = "wss://api.openai.com/v1/realtime?model=" + quote_plus(model)
-        headers = {
-            "Authorization": "Bearer " + api_key,
-            "OpenAI-Beta": "realtime=v1",
-        }
+        headers = {"Authorization": "Bearer " + api_key}
 
         while True:
             try:
                 print("[OpenAI RT] 🔌 Connecting...")
                 print(f"[OpenAI RT] 🎙 Voice loaded: {self._openai_realtime_voice()} | Model: {model} | Provider: OpenAI Realtime")
                 self.ui.set_state("THINKING")
+                schema = str(getattr(self, "_openai_realtime_schema", "ga") or "ga")
+                request_headers = dict(headers)
+                if schema == "beta":
+                    request_headers["OpenAI-Beta"] = "realtime=v1"
                 async with websockets.connect(
                     url,
-                    additional_headers=headers,
+                    additional_headers=request_headers,
                     ping_interval=20,
                     ping_timeout=20,
                     max_size=8 * 1024 * 1024,
@@ -2210,7 +2210,10 @@ class JarvisLive:
                     self._openai_session_update_ok = False
                     self._openai_session_update_retry = 0
 
-                    await ws.send(json.dumps(self._openai_realtime_session_update(), ensure_ascii=False))
+                    await ws.send(json.dumps(
+                        self._openai_realtime_session_update(legacy=(schema == "beta")),
+                        ensure_ascii=False,
+                    ))
                     print("[OpenAI RT] ✅ Connected.")
                     self.ui.set_state("STANDBY" if self.ui.standby else "LISTENING")
                     self.ui.write_log("SYS: MEDPOV FRIDAY online.")

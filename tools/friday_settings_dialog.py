@@ -31,6 +31,7 @@ from .friday_settings_store import (
     DEFAULT_OPENAI_REALTIME_MODEL,
     DEFAULT_OPENAI_TTS_MODEL,
     DEFAULT_OPENAI_VOICE,
+    OPENAI_REALTIME_VOICE_OPTIONS,
     VOICE_OPTIONS,
     normalize_ai_provider,
     normalize_fallback_provider,
@@ -299,13 +300,21 @@ class FridaySettingsDialog(QDialog):
         self.openai_realtime_model = QLineEdit(DEFAULT_OPENAI_REALTIME_MODEL)
         self.openai_tts_model = QLineEdit(DEFAULT_OPENAI_TTS_MODEL)
         self.openai_voice = QComboBox()
-        for voice_name in ["marin", "cedar", "coral", "nova", "shimmer", "alloy", "ash", "ballad", "echo", "fable", "onyx", "sage", "verse"]:
-            self.openai_voice.addItem(voice_name, voice_name)
+        self.openai_voice.setMaxVisibleItems(12)
+        self.openai_voice.setView(QListView())
+        self.openai_voice.view().setObjectName("FridayVoiceComboView")
+        self.openai_voice.view().setStyleSheet("""
+            QListView#FridayVoiceComboView { background:#06101a; color:#eef7ff; border:1px solid #ff8a1d; selection-background-color:#17314a; outline:0; }
+            QListView#FridayVoiceComboView::item { min-height:28px; padding:6px 10px; }
+            QListView#FridayVoiceComboView::item:selected { color:#ffffff; background:#1d4b68; }
+        """)
+        for item in OPENAI_REALTIME_VOICE_OPTIONS:
+            self.openai_voice.addItem(item["label"], item["name"])
         test_btn = QPushButton("OpenAI Bağlantısını Test Et")
         test_btn.clicked.connect(self._test_openai)
         info = QLabel(
             "OpenAI key config/friday_settings.json ve legacy config/api_keys.json içine yazılır. "
-            "Vision için JPEG/base64 image input kullanılır; yazılı komutlar function calling ile lokal FRIDAY araçlarına yönlendirilir. OpenAI Provider modunda cevap sesi için OpenAI TTS kullanılır."
+            "OpenAI Realtime modunda mikrofon, düşünme, tool/function calling ve ses çıkışı doğrudan OpenAI üzerinden çalışır. Kadın/erkek ses profili OpenAI voice alanından seçilir. Vision için kamera snapshot sonucu Realtime oturumuna araç çıktısı olarak döner."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
@@ -314,7 +323,7 @@ class FridaySettingsDialog(QDialog):
         form.addRow("Vision model", self.openai_vision_model)
         form.addRow("Realtime model", self.openai_realtime_model)
         form.addRow("TTS model", self.openai_tts_model)
-        form.addRow("OpenAI voice", self.openai_voice)
+        form.addRow("OpenAI Realtime sesi", self.openai_voice)
         form.addRow("", test_btn)
         form.addRow("", info)
         return w
