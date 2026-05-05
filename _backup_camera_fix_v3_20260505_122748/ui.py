@@ -1015,15 +1015,8 @@ class HudCanvas(QWidget):
                 self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 self._camera.set(cv2.CAP_PROP_FPS, 30)
-                self._camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
                 pass
-
-            # İlk kamera analizinde worker thread snapshot beklerken frame hazır olsun.
-            # Bunu timer'a bırakınca bazen ilk 1 saniyede snapshot gelmiyor ve
-            # screen_processor aynı kamerayı ikinci kez açmaya çalışıyordu. Bu da
-            # bazı Windows webcam sürücülerinde uygulamayı tamamen kapatabiliyor.
-            self._prime_camera_snapshot(max_reads=10)
 
             self._camera_timer.start(30)
             self.update()
@@ -1060,12 +1053,17 @@ class HudCanvas(QWidget):
         self.state = "IDLE"
         self.update()
 
-    def _store_camera_frame(self, frame, force_snapshot: bool = False) -> bool:
-        """Convert an OpenCV frame to the HUD image and cached JPEG snapshot."""
-        if frame is None or cv2 is None:
-            return False
+    def _camera_tick(self):
+        if not self.camera_mode or self._camera is None:
+            return
 
         try:
+            ok, frame = self._camera.read()
+            if not ok or frame is None:
+                self._camera_error = "Kamera görüntüsü alınamadı"
+                self.update()
+                return
+
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
@@ -1079,47 +1077,17 @@ class HudCanvas(QWidget):
                 QImage.Format.Format_RGB888,
             ).copy()
 
-            # Vision modülü ayrı kamera açmaya çalışmasın diye JPEG snapshot sakla.
-            if force_snapshot or (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
-                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
-                if ok_jpg:
-                    with self._camera_lock:
-                        self._camera_snapshot_bytes = jpg.tobytes()
+            # Vision modülü ayrı kamera açmaya çalışmasın diye periyodik JPEG snapshot sakla.
+            if (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
+                try:
+                    ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+                    if ok_jpg:
+                        with self._camera_lock:
+                            self._camera_snapshot_bytes = jpg.tobytes()
+                except Exception:
+                    pass
 
             self._camera_error = ""
-            return True
-        except Exception as exc:
-            self._camera_error = str(exc)
-            return False
-
-    def _prime_camera_snapshot(self, max_reads: int = 8) -> bool:
-        """Synchronously read the first frame so camera analysis can start instantly."""
-        if self._camera is None or cv2 is None:
-            return False
-
-        for _ in range(max(1, int(max_reads or 1))):
-            try:
-                ok, frame = self._camera.read()
-                if ok and frame is not None and self._store_camera_frame(frame, force_snapshot=True):
-                    return True
-            except Exception as exc:
-                self._camera_error = str(exc)
-                return False
-            time.sleep(0.025)
-        return False
-
-    def _camera_tick(self):
-        if not self.camera_mode or self._camera is None:
-            return
-
-        try:
-            ok, frame = self._camera.read()
-            if not ok or frame is None:
-                self._camera_error = "Kamera görüntüsü alınamadı"
-                self.update()
-                return
-
-            self._store_camera_frame(frame, force_snapshot=False)
             self.update()
 
         except Exception as exc:
@@ -1138,12 +1106,6 @@ class HudCanvas(QWidget):
                 mime = self._camera_snapshot_mime
             if data:
                 return data, mime
-
-            # Worker thread ilk frame'i çok erken isterse timer henüz çalışmamış olabilir.
-            # UI capture zaten açıksa hızlıca bir frame daha prime etmeyi dene.
-            if self._camera is not None:
-                self._prime_camera_snapshot(max_reads=1)
-
             time.sleep(0.03)
 
         raise RuntimeError(self._camera_error or "Kamera frame hazır değil")

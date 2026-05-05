@@ -1,0 +1,154 @@
+Binary files friday_main/__pycache__/main.cpython-313.pyc and friday_fix_v3_work/__pycache__/main.cpython-313.pyc differ
+Binary files friday_main/__pycache__/ui.cpython-313.pyc and friday_fix_v3_work/__pycache__/ui.cpython-313.pyc differ
+Binary files friday_main/actions/__pycache__/screen_processor.cpython-313.pyc and friday_fix_v3_work/actions/__pycache__/screen_processor.cpython-313.pyc differ
+diff -ruN friday_main/actions/screen_processor.py friday_fix_v3_work/actions/screen_processor.py
+--- friday_main/actions/screen_processor.py	2026-05-05 09:10:10.000000000 +0000
++++ friday_fix_v3_work/actions/screen_processor.py	2026-05-05 09:22:43.677165709 +0000
+@@ -431,12 +431,18 @@
+             # Canlı HUD frame'i JPEG snapshot olarak kullanılır; böylece kamera kilitlenmez.
+             if player is not None and hasattr(player, "capture_camera_snapshot"):
+                 try:
+-                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=1.0)
++                    # UI zaten kamerayı açtı; aynı cihazı worker thread içinde tekrar açma.
++                    # İlk frame için biraz daha bekliyoruz. Bu, Windows webcam sürücülerinde
++                    # çift VideoCapture kaynaklı sessiz kapanmaları engeller.
++                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=3.0)
+                     print(f"[Vision] 📷 UI camera snapshot: {len(image_bytes):,} bytes")
+                 except Exception as ui_exc:
+-                    print(f"[Vision] ⚠️  UI camera snapshot failed: {ui_exc}")
+-                    image_bytes, mime_type = _capture_camera()
+-                    print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
++                    print(f"[Vision] ❌ UI camera snapshot failed: {ui_exc}")
++                    try:
++                        player.write_log("ERR: Kamera görüntüsü hazırlanamadı. Tekrar 'kameraya bak' demeyi dene.")
++                    except Exception:
++                        pass
++                    return False
+             else:
+                 image_bytes, mime_type = _capture_camera()
+                 print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
+diff -ruN friday_main/main.py friday_fix_v3_work/main.py
+--- friday_main/main.py	2026-05-05 09:10:10.000000000 +0000
++++ friday_fix_v3_work/main.py	2026-05-05 09:22:43.677842172 +0000
+@@ -925,7 +925,8 @@
+                 # If the local voice interceptor already started camera analysis,
+                 # ignore Gemini's duplicate tool call for a few seconds.
+                 if angle == "camera" and (time.time() - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0)) < 4.5:
+-                    result = "Camera vision analysis is already running. Stay silent."
++                    self._suppress_model_output(7.0)
++                    result = "Camera vision analysis is already running silently. Do not speak or add commentary."
+                 else:
+                     if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
+                         self.ui.start_camera_mode(camera_index=None)
+diff -ruN friday_main/ui.py friday_fix_v3_work/ui.py
+--- friday_main/ui.py	2026-05-05 09:10:10.000000000 +0000
++++ friday_fix_v3_work/ui.py	2026-05-05 09:22:43.676259915 +0000
+@@ -1015,9 +1015,16 @@
+                 self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                 self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                 self._camera.set(cv2.CAP_PROP_FPS, 30)
++                self._camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+             except Exception:
+                 pass
+ 
++            # İlk kamera analizinde worker thread snapshot beklerken frame hazır olsun.
++            # Bunu timer'a bırakınca bazen ilk 1 saniyede snapshot gelmiyor ve
++            # screen_processor aynı kamerayı ikinci kez açmaya çalışıyordu. Bu da
++            # bazı Windows webcam sürücülerinde uygulamayı tamamen kapatabiliyor.
++            self._prime_camera_snapshot(max_reads=10)
++
+             self._camera_timer.start(30)
+             self.update()
+             return True
+@@ -1053,17 +1060,12 @@
+         self.state = "IDLE"
+         self.update()
+ 
+-    def _camera_tick(self):
+-        if not self.camera_mode or self._camera is None:
+-            return
++    def _store_camera_frame(self, frame, force_snapshot: bool = False) -> bool:
++        """Convert an OpenCV frame to the HUD image and cached JPEG snapshot."""
++        if frame is None or cv2 is None:
++            return False
+ 
+         try:
+-            ok, frame = self._camera.read()
+-            if not ok or frame is None:
+-                self._camera_error = "Kamera görüntüsü alınamadı"
+-                self.update()
+-                return
+-
+             frame = cv2.flip(frame, 1)
+             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+             h, w, ch = rgb.shape
+@@ -1077,17 +1079,47 @@
+                 QImage.Format.Format_RGB888,
+             ).copy()
+ 
+-            # Vision modülü ayrı kamera açmaya çalışmasın diye periyodik JPEG snapshot sakla.
+-            if (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
+-                try:
+-                    ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+-                    if ok_jpg:
+-                        with self._camera_lock:
+-                            self._camera_snapshot_bytes = jpg.tobytes()
+-                except Exception:
+-                    pass
++            # Vision modülü ayrı kamera açmaya çalışmasın diye JPEG snapshot sakla.
++            if force_snapshot or (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
++                ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
++                if ok_jpg:
++                    with self._camera_lock:
++                        self._camera_snapshot_bytes = jpg.tobytes()
+ 
+             self._camera_error = ""
++            return True
++        except Exception as exc:
++            self._camera_error = str(exc)
++            return False
++
++    def _prime_camera_snapshot(self, max_reads: int = 8) -> bool:
++        """Synchronously read the first frame so camera analysis can start instantly."""
++        if self._camera is None or cv2 is None:
++            return False
++
++        for _ in range(max(1, int(max_reads or 1))):
++            try:
++                ok, frame = self._camera.read()
++                if ok and frame is not None and self._store_camera_frame(frame, force_snapshot=True):
++                    return True
++            except Exception as exc:
++                self._camera_error = str(exc)
++                return False
++            time.sleep(0.025)
++        return False
++
++    def _camera_tick(self):
++        if not self.camera_mode or self._camera is None:
++            return
++
++        try:
++            ok, frame = self._camera.read()
++            if not ok or frame is None:
++                self._camera_error = "Kamera görüntüsü alınamadı"
++                self.update()
++                return
++
++            self._store_camera_frame(frame, force_snapshot=False)
+             self.update()
+ 
+         except Exception as exc:
+@@ -1106,6 +1138,12 @@
+                 mime = self._camera_snapshot_mime
+             if data:
+                 return data, mime
++
++            # Worker thread ilk frame'i çok erken isterse timer henüz çalışmamış olabilir.
++            # UI capture zaten açıksa hızlıca bir frame daha prime etmeyi dene.
++            if self._camera is not None:
++                self._prime_camera_snapshot(max_reads=1)
++
+             time.sleep(0.03)
+ 
+         raise RuntimeError(self._camera_error or "Kamera frame hazır değil")

@@ -925,8 +925,7 @@ class JarvisLive:
                 # If the local voice interceptor already started camera analysis,
                 # ignore Gemini's duplicate tool call for a few seconds.
                 if angle == "camera" and (time.time() - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0)) < 4.5:
-                    self._suppress_model_output(7.0)
-                    result = "Camera vision analysis is already running silently. Do not speak or add commentary."
+                    result = "Camera vision analysis is already running. Stay silent."
                 else:
                     if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
                         self.ui.start_camera_mode(camera_index=None)

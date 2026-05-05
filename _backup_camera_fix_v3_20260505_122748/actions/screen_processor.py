@@ -431,18 +431,12 @@ def screen_process(
             # Canlı HUD frame'i JPEG snapshot olarak kullanılır; böylece kamera kilitlenmez.
             if player is not None and hasattr(player, "capture_camera_snapshot"):
                 try:
-                    # UI zaten kamerayı açtı; aynı cihazı worker thread içinde tekrar açma.
-                    # İlk frame için biraz daha bekliyoruz. Bu, Windows webcam sürücülerinde
-                    # çift VideoCapture kaynaklı sessiz kapanmaları engeller.
-                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=3.0)
+                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=1.0)
                     print(f"[Vision] 📷 UI camera snapshot: {len(image_bytes):,} bytes")
                 except Exception as ui_exc:
-                    print(f"[Vision] ❌ UI camera snapshot failed: {ui_exc}")
-                    try:
-                        player.write_log("ERR: Kamera görüntüsü hazırlanamadı. Tekrar 'kameraya bak' demeyi dene.")
-                    except Exception:
-                        pass
-                    return False
+                    print(f"[Vision] ⚠️  UI camera snapshot failed: {ui_exc}")
+                    image_bytes, mime_type = _capture_camera()
+                    print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
             else:
                 image_bytes, mime_type = _capture_camera()
                 print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
