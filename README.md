@@ -268,6 +268,61 @@ Do not use global `python setup.py` unless the virtual environment is activated 
 
 ---
 
+## 🔄 Update
+
+To upgrade to the latest version, run the following steps:
+
+### Step 1 — Go to project folder
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+```
+
+### Step 2 — Pull latest code (hard reset)
+
+```powershell
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+```
+
+### Step 3 — Activate virtual environment
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### Step 4 — Update dependencies
+
+```powershell
+pip install -r requirements.txt
+pip install opencv-python
+```
+
+---
+
+### ⚡ Quick Update (One command)
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install opencv-python
+```
+
+---
+
+### 🚀 Start after update
+
+```powershell
+.\start_friday.ps1
+```
+
+---
+
 ## First Launch Configuration
 
 F.R.I.D.A.Y does not ask for the Gemini API key during setup.
