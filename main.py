@@ -5,6 +5,7 @@ import json
 import sys
 import traceback
 import time
+import difflib
 from pathlib import Path
 
 import sounddevice as sd
@@ -628,6 +629,12 @@ class JarvisLive:
         self._assistant_audio_guard_until = 0.0
         self._last_assistant_spoken_norm = ""
         self._last_assistant_spoken_raw = ""
+        self._last_voice_final_norm = ""
+        self._last_voice_final_ts = 0.0
+        self._last_openai_command_norm = ""
+        self._last_openai_command_ts = 0.0
+        self._last_openai_tool_sig = ""
+        self._last_openai_tool_ts = 0.0
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -652,7 +659,11 @@ class JarvisLive:
         self.set_speaking(True)
 
     def _end_local_assistant_audio(self) -> None:
-        self._assistant_audio_guard_until = time.time() + 2.5
+        # Speaker audio often leaks into the microphone a few seconds after
+        # playback stops, especially with laptop speakers. Keep a longer tail
+        # in OpenAI provider mode because Gemini is only being used as an STT
+        # bridge and should not hear FRIDAY's own OpenAI TTS output.
+        self._assistant_audio_guard_until = time.time() + (5.0 if self._use_openai_brain() else 2.5)
         self.set_speaking(False)
 
     def _looks_like_assistant_echo(self, text: str) -> bool:
@@ -669,6 +680,10 @@ class JarvisLive:
             return False
         if len(t) >= 8 and (t in last or last in t):
             return True
+        if len(t) >= 10 and len(last) >= 10:
+            ratio = difflib.SequenceMatcher(None, t, last).ratio()
+            if ratio >= 0.58:
+                return True
 
         # Common helper phrases often leak back from speakers exactly after
         # greeting/help responses.
@@ -719,11 +734,30 @@ class JarvisLive:
         if not raw:
             return False
 
-        # Avoid duplicate partial/final voice transcripts hitting OpenAI twice.
         now = time.time()
-        if source.startswith("voice") and now - float(getattr(self, "_last_provider_command_ts", 0.0) or 0.0) < 0.8:
+        norm_raw = self._norm_text(raw)
+
+        # In OpenAI mode Gemini is only an STT bridge. Do not route anything
+        # heard while FRIDAY's OpenAI TTS is still playing or tailing off.
+        if source.startswith("voice") and self._is_assistant_audio_guard_active():
             return True
+        if source.startswith("voice") and self._looks_like_assistant_echo(raw):
+            return True
+
+        # Avoid duplicate partial/final voice transcripts and delayed echo
+        # fragments hitting OpenAI twice.
+        if source.startswith("voice") and now - float(getattr(self, "_last_provider_command_ts", 0.0) or 0.0) < 1.35:
+            return True
+        last_norm = str(getattr(self, "_last_openai_command_norm", "") or "")
+        last_ts = float(getattr(self, "_last_openai_command_ts", 0.0) or 0.0)
+        if source.startswith("voice") and norm_raw and last_norm and now - last_ts < 5.0:
+            if norm_raw == last_norm or norm_raw in last_norm or last_norm in norm_raw:
+                return True
+            if difflib.SequenceMatcher(None, norm_raw, last_norm).ratio() >= 0.74:
+                return True
         self._last_provider_command_ts = now
+        self._last_openai_command_norm = norm_raw
+        self._last_openai_command_ts = now
 
         def _worker():
             try:
@@ -746,6 +780,11 @@ class JarvisLive:
                     summaries = []
                     silent_tool_names = {"screen_process", "friday_camera_mode"}
                     for call in tool_calls[:3]:
+                        sig = f"{call.name}:{json.dumps(call.args or {}, sort_keys=True, ensure_ascii=False)}"
+                        if time.time() - float(getattr(self, "_last_openai_tool_ts", 0.0) or 0.0) < 4.0 and sig == str(getattr(self, "_last_openai_tool_sig", "") or ""):
+                            continue
+                        self._last_openai_tool_sig = sig
+                        self._last_openai_tool_ts = time.time()
                         shim = _OpenAIToolCallShim(call.id, call.name, call.args)
                         try:
                             fr = asyncio.run(self._execute_tool(shim))
@@ -1403,6 +1442,13 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                # Hard echo gate for OpenAI mode: while OpenAI TTS is
+                                # playing, ignore every STT fragment from Gemini. This
+                                # fixes the speaker->mic loop where FRIDAY answers its
+                                # own reply and then routes random tool commands.
+                                if self._use_openai_brain() and self._is_assistant_audio_guard_active():
+                                    in_buf = []
+                                    continue
                                 if self._looks_like_assistant_echo(txt):
                                     continue
                                 in_buf.append(txt)
@@ -1434,10 +1480,26 @@ class JarvisLive:
                                 self._turn_done_event.set()
 
                             full_in = " ".join(in_buf).strip()
+                            if full_in and self._use_openai_brain() and self._is_assistant_audio_guard_active():
+                                full_in = ""
+                                self._openai_voice_pending = False
+                                self._voice_local_handled = False
                             if full_in and self._looks_like_assistant_echo(full_in):
                                 full_in = ""
                                 self._openai_voice_pending = False
                                 self._voice_local_handled = False
+                            if full_in:
+                                full_norm = self._norm_text(full_in)
+                                now_final = time.time()
+                                if (
+                                    full_norm
+                                    and full_norm == str(getattr(self, "_last_voice_final_norm", "") or "")
+                                    and now_final - float(getattr(self, "_last_voice_final_ts", 0.0) or 0.0) < 4.0
+                                ):
+                                    full_in = ""
+                                else:
+                                    self._last_voice_final_norm = full_norm
+                                    self._last_voice_final_ts = now_final
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                                 if self._openai_voice_pending:
@@ -1464,6 +1526,17 @@ class JarvisLive:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
                             print(f"[FRIDAY] 📞 {fc.name}")
+                            if self._use_openai_brain():
+                                # In OpenAI provider mode Gemini Live is only the
+                                # microphone/transcription bridge. Letting Gemini
+                                # execute tools too creates duplicate vision calls
+                                # and wrong actions such as description/toggle_mute.
+                                fn_responses.append(types.FunctionResponse(
+                                    id=fc.id,
+                                    name=fc.name,
+                                    response={"result": "OpenAI provider handles command routing. Gemini tool call ignored silently.", "silent": True},
+                                ))
+                                continue
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(

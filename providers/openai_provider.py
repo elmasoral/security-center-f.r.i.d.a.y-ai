@@ -86,7 +86,8 @@ def analyze_image_bytes(image_bytes: bytes, mime_type: str, prompt: str, *, mode
     model = (model or get_openai_vision_model() or "gpt-4.1-mini").strip()
     instructions = (
         "You are F.R.I.D.A.Y, MEDPOV's private desktop AI assistant. "
-        "Analyze the image precisely. Be concise and direct. "
+        "Analyze the image precisely. Answer in one short sentence unless the user explicitly asks for details. "
+        "Do not repeat prior assistant wording. "
         + get_friday_response_language_instruction()
     )
     data_url = _data_url(image_bytes, mime_type)
@@ -124,7 +125,7 @@ def analyze_image_bytes(image_bytes: bytes, mime_type: str, prompt: str, *, mode
                 ],
             },
         ],
-        max_tokens=500,
+        max_tokens=160,
     )
     return str(completion.choices[0].message.content or "").strip()
 
@@ -147,7 +148,7 @@ def generate_text(prompt: str, *, system: Optional[str] = None, model: Optional[
     completion = client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        max_tokens=900,
+        max_tokens=500,
     )
     return str(completion.choices[0].message.content or "").strip()
 
@@ -223,6 +224,7 @@ def route_command(user_text: str, tool_declarations: Iterable[Dict[str, Any]], *
             "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center. "
             "Use tools whenever the user asks you to operate the computer, camera, files, browser, reminders, or Security Center. "
             "Do not pretend to have completed an action without selecting a tool. "
+            "If the text looks like a fragment of your own previous answer or an unclear speech-to-text echo, ask for clarification without using tools. "
             + get_friday_response_language_instruction()
         )
         completion = client.chat.completions.create(
@@ -234,7 +236,7 @@ def route_command(user_text: str, tool_declarations: Iterable[Dict[str, Any]], *
             tools=tools,
             tool_choice="auto",
             temperature=0.2,
-            max_tokens=800,
+            max_tokens=360,
         )
         msg = completion.choices[0].message
         tool_calls: List[OpenAIToolCall] = []

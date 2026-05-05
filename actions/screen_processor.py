@@ -567,6 +567,20 @@ class _VisionSession:
 _session      = _VisionSession()
 _session_lock = threading.Lock()
 _session_up   = False
+_openai_vision_lock = threading.Lock()
+_openai_vision_generation = 0
+
+
+def _next_openai_vision_generation() -> int:
+    global _openai_vision_generation
+    with _openai_vision_lock:
+        _openai_vision_generation += 1
+        return _openai_vision_generation
+
+
+def _is_current_openai_vision(token: int) -> bool:
+    with _openai_vision_lock:
+        return token == _openai_vision_generation
 
 
 def _ensure_session(player=None) -> None:
@@ -654,14 +668,22 @@ def screen_process(
         return False
 
     language_guard = _vision_language_instruction()
-    analysis_text = f"{language_guard}\n\nUser request: {user_text}".strip()
+    analysis_text = (
+        f"{language_guard}\n"
+        "Yanıtı tek ve net bir cümleyle ver. Emin değilsen 'büyük ihtimalle' de; uzun açıklama yapma.\n"
+        f"User request: {user_text}"
+    ).strip()
 
     if use_openai_vision:
+        token = _next_openai_vision_generation()
         try:
             if player:
                 player.write_log("SYS: OpenAI Vision analizi başlatıldı.")
             from providers.openai_provider import analyze_image_bytes
             result = analyze_image_bytes(image_bytes, mime_type, analysis_text)
+            if not _is_current_openai_vision(token):
+                print("[OpenAI Vision] ↯ stale result ignored")
+                return True
             result = re.sub(r"\s+", " ", str(result or "")).strip()
             if result:
                 if player:
@@ -671,6 +693,9 @@ def screen_process(
                 return True
             raise RuntimeError("OpenAI Vision returned an empty response.")
         except Exception as exc:
+            if not _is_current_openai_vision(token):
+                print("[OpenAI Vision] ↯ stale error ignored")
+                return True
             print(f"[OpenAI Vision] ❌ {exc}")
             if _ai_provider() == "openai":
                 try:
@@ -691,6 +716,10 @@ def screen_process(
 
 
 def cancel_vision_requests() -> None:
+    try:
+        _next_openai_vision_generation()
+    except Exception:
+        pass
     try:
         _session.cancel_pending()
     except Exception as e:
