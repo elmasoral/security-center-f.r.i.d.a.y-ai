@@ -4437,6 +4437,152 @@ _MP_LAND_POLYS = [
 ]
 
 
+
+# Dashboard-grade real map tiles (same visual source family as Security Center Leaflet dashboard).
+# Tiles are downloaded once and cached locally, so the map keeps working after first load.
+_MP_TILE_SIZE = 256
+_MP_TILE_PROVIDER = "carto_dark"
+_MP_TILE_SUBDOMAINS = ("a", "b", "c", "d")
+_MP_TILE_PENDING = set()
+_MP_TILE_LOCK = threading.Lock()
+_MP_TILE_CACHE_DIR = BASE_DIR / "cache" / "map_tiles" / _MP_TILE_PROVIDER
+_MP_MERCATOR_MAX_LAT = 85.05112878
+
+
+def _mp_map_tile_zoom(self) -> int:
+    _mp_map_init(self)
+    visual_zoom = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+    if visual_zoom >= 4.0:
+        return 5
+    if visual_zoom >= 2.2:
+        return 4
+    if visual_zoom >= 1.25:
+        return 3
+    return 2
+
+
+def _mp_map_clip_lat(lat: float) -> float:
+    return max(-_MP_MERCATOR_MAX_LAT, min(_MP_MERCATOR_MAX_LAT, float(lat)))
+
+
+def _mp_map_latlng_to_world_px(lat: float, lng: float, z: int) -> QPointF:
+    lat = _mp_map_clip_lat(lat)
+    lng = float(lng)
+    scale = _MP_TILE_SIZE * (2 ** int(z))
+    x = (lng + 180.0) / 360.0 * scale
+    sin_lat = math.sin(math.radians(lat))
+    y = (0.5 - math.log((1 + sin_lat) / (1 - sin_lat)) / (4 * math.pi)) * scale
+    return QPointF(x, y)
+
+
+def _mp_map_tile_path(z: int, x: int, y: int) -> Path:
+    return _MP_TILE_CACHE_DIR / str(int(z)) / str(int(x)) / f"{int(y)}.png"
+
+
+def _mp_map_schedule_tile_download(widget, z: int, x: int, y: int, path: Path) -> None:
+    key = (int(z), int(x), int(y))
+    with _MP_TILE_LOCK:
+        if key in _MP_TILE_PENDING:
+            return
+        _MP_TILE_PENDING.add(key)
+
+    def _worker():
+        try:
+            sub = _MP_TILE_SUBDOMAINS[(x + y) % len(_MP_TILE_SUBDOMAINS)]
+            url = f"https://{sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            from urllib.request import Request, urlopen
+            req = Request(url, headers={"User-Agent": "MEDPOV-FRIDAY-SecurityMap/2.8"})
+            with urlopen(req, timeout=9) as resp:
+                data = resp.read()
+            if data:
+                tmp.write_bytes(data)
+                tmp.replace(path)
+        except Exception:
+            pass
+        finally:
+            with _MP_TILE_LOCK:
+                _MP_TILE_PENDING.discard(key)
+            try:
+                widget.update()
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
+    """Draw real dashboard-like dark world tiles. Returns loaded tile count."""
+    _mp_map_init(self)
+    z = _mp_map_tile_zoom(self)
+    n = 2 ** z
+    center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+
+    left_world = center_px.x() - rect.width() / 2.0
+    top_world = center_px.y() - rect.height() / 2.0
+    right_world = center_px.x() + rect.width() / 2.0
+    bottom_world = center_px.y() + rect.height() / 2.0
+
+    start_tx = int(math.floor(left_world / _MP_TILE_SIZE)) - 1
+    end_tx = int(math.floor(right_world / _MP_TILE_SIZE)) + 1
+    start_ty = max(0, int(math.floor(top_world / _MP_TILE_SIZE)) - 1)
+    end_ty = min(n - 1, int(math.floor(bottom_world / _MP_TILE_SIZE)) + 1)
+
+    loaded = 0
+    p.save()
+    p.setClipRect(rect)
+
+    # Tile placeholder glow while the real map downloads.
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol("#050a12", 235)))
+    p.drawRect(rect)
+
+    for ty in range(start_ty, end_ty + 1):
+        for tx_raw in range(start_tx, end_tx + 1):
+            tx = tx_raw % n
+            path = _mp_map_tile_path(z, tx, ty)
+            sx = rect.center().x() + (tx_raw * _MP_TILE_SIZE - center_px.x())
+            sy = rect.center().y() + (ty * _MP_TILE_SIZE - center_px.y())
+            tile_rect = QRectF(sx, sy, _MP_TILE_SIZE + 1, _MP_TILE_SIZE + 1)
+
+            if path.exists():
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    p.drawPixmap(tile_rect, pix, QRectF(0, 0, pix.width(), pix.height()))
+                    loaded += 1
+                    continue
+
+            # Soft placeholder tile grid while the image is not cached yet.
+            p.setPen(QPen(qcol(C.PRI, 16), 1))
+            p.setBrush(QBrush(qcol("#06111d", 190)))
+            p.drawRect(tile_rect)
+            _mp_map_schedule_tile_download(self, z, tx, ty, path)
+
+    # Dashboard-style darkening and cyan/red atmosphere overlay.
+    shade = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    shade.setColorAt(0.00, qcol("#00050a", 95))
+    shade.setColorAt(0.45, qcol("#00131a", 42))
+    shade.setColorAt(1.00, qcol("#050006", 105))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(shade))
+    p.drawRect(rect)
+
+    # If there is no internet/cache yet, keep a recognisable vector fallback under the HUD.
+    if loaded == 0:
+        _mp_map_draw_land(self, p, rect)
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.setPen(qcol(C.TEXT_DIM, 170))
+        p.drawText(
+            QRectF(rect.left() + 24, rect.bottom() - 28, rect.width() - 48, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "Real dashboard map tiles are loading and will be cached locally."
+        )
+
+    p.restore()
+    return loaded
+
 def _mp_map_norm_place(value: str) -> str:
     value = (value or "").lower().strip()
     value = value.translate(str.maketrans({"ı": "i", "ğ": "g", "ü": "u", "ş": "s", "ö": "o", "ç": "c"}))
@@ -4544,17 +4690,25 @@ def _mp_map_is_open(self):
 
 
 def _mp_map_project(self, lat, lng, rect: QRectF):
+    """Project lat/lng using Web Mercator so markers align with dashboard map tiles."""
     _mp_map_init(self)
+    z = _mp_map_tile_zoom(self)
     center_lat, center_lng = self._security_map_center
-    zoom = max(0.85, min(7.0, float(self._security_map_zoom or 1.0)))
-    # Slightly compressed vertical range gives a dashboard-like wide map.
-    scale_x = rect.width() / (360.0 / zoom)
-    scale_y = rect.height() / (170.0 / zoom)
-    scale = min(scale_x, scale_y)
-    x = rect.center().x() + (float(lng) - float(center_lng)) * scale
-    y = rect.center().y() - (float(lat) - float(center_lat)) * scale
-    return QPointF(x, y)
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+    point_px = _mp_map_latlng_to_world_px(float(lat), float(lng), z)
 
+    world = _MP_TILE_SIZE * (2 ** z)
+    dx = point_px.x() - center_px.x()
+    # Choose the nearest wrapped world copy, like Leaflet worldCopyJump.
+    if dx > world / 2:
+        dx -= world
+    elif dx < -world / 2:
+        dx += world
+
+    dy = point_px.y() - center_px.y()
+    x = rect.center().x() + dx
+    y = rect.center().y() + dy
+    return QPointF(x, y)
 
 def _mp_map_on_screen(pt: QPointF, rect: QRectF, margin: float = 80.0) -> bool:
     return (rect.left() - margin) <= pt.x() <= (rect.right() + margin) and (rect.top() - margin) <= pt.y() <= (rect.bottom() + margin)
@@ -4823,8 +4977,9 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
     p.setBrush(QBrush(qcol("#020812", 76)))
     p.drawRoundedRect(rect, 18, 18)
 
+    # Real dashboard-like map tiles first, then a subtle coordinate grid on top.
+    _mp_map_draw_real_tiles(self, p, rect)
     _mp_map_draw_grid(self, p, rect)
-    _mp_map_draw_land(self, p, rect)
 
     # Subtle red/green atmospheric hotspots.
     for gx, gy, col, alpha in [(0.21, 0.42, C.ACC, 28), (0.53, 0.42, C.PRI, 34), (0.76, 0.42, C.RED, 24), (0.58, 0.70, C.GREEN, 20)]:
