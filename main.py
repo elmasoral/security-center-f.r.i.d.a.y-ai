@@ -573,6 +573,31 @@ class JarvisLive:
         if not t:
             return False
 
+        camera_close_phrases = (
+            "/camera-off", "/kamera-kapat",
+            "kamerayi kapat", "kamerayı kapat",
+            "kamera kapat", "kamera modunu kapat",
+            "camera off", "close camera", "stop camera"
+        )
+        camera_open_phrases = (
+            "/camera", "/kamera",
+            "kamerayi ac", "kamerayı aç",
+            "kamera ac", "kamera aç",
+            "kamera modunu ac", "kamera modunu aç",
+            "kamerayi kullan", "kamerayı kullan",
+            "camera on", "open camera", "start camera"
+        )
+
+        if any(p in t for p in camera_close_phrases):
+            if hasattr(self.ui, "stop_camera_mode"):
+                self.ui.stop_camera_mode()
+            return True
+
+        if any(p in t for p in camera_open_phrases):
+            if hasattr(self.ui, "start_camera_mode"):
+                self.ui.start_camera_mode(camera_index=None)
+            return True
+
         standby_phrases = (
             "/standby", "/bekleme", "standby", "standby mode",
             "bekleme moduna gec", "beklemeye gec", "beklemeye al",
@@ -753,6 +778,10 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "screen_process":
+                angle = str(args.get("angle") or "screen").lower().strip()
+                if angle == "camera" and hasattr(self.ui, "start_camera_mode"):
+                    self.ui.start_camera_mode(camera_index=None)
+
                 threading.Thread(
                     target=screen_process,
                     kwargs={"parameters": args, "response": None,

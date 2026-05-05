@@ -410,8 +410,19 @@ def screen_process(
 
     try:
         if angle == "camera":
-            image_bytes, mime_type = _capture_camera()
-            print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
+            # UI kamera modu açıksa aynı kamera cihazını ikinci kez açma.
+            # Canlı HUD frame'i JPEG snapshot olarak kullanılır; böylece kamera kilitlenmez.
+            if player is not None and hasattr(player, "capture_camera_snapshot"):
+                try:
+                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=2.5)
+                    print(f"[Vision] 📷 UI camera snapshot: {len(image_bytes):,} bytes")
+                except Exception as ui_exc:
+                    print(f"[Vision] ⚠️  UI camera snapshot failed: {ui_exc}")
+                    image_bytes, mime_type = _capture_camera()
+                    print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
+            else:
+                image_bytes, mime_type = _capture_camera()
+                print(f"[Vision] 📷 Camera: {len(image_bytes):,} bytes")
         else:
             image_bytes, mime_type = _capture_screen()
             print(f"[Vision] 🖥️  Screen: {len(image_bytes):,} bytes")

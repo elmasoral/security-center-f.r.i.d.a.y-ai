@@ -34,7 +34,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
-    QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
     QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
@@ -44,6 +44,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget, QProgressBar,
 )
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -478,6 +483,18 @@ class HudCanvas(QWidget):
         self.speaking = False
         self.state = "IDLE"
 
+        # MEDPOV FRIDAY camera / Jarvis vision mode
+        self.camera_mode = False
+        self._camera = None
+        self._camera_frame: QImage | None = None
+        self._camera_error = ""
+        self._camera_index = 0
+        self._camera_timer = QTimer(self)
+        self._camera_timer.timeout.connect(self._camera_tick)
+        self._camera_lock = threading.Lock()
+        self._camera_snapshot_bytes: bytes | None = None
+        self._camera_snapshot_mime = "image/jpeg"
+
         self._tick = 0
         self._rot_outer = 0.0
         self._rot_inner = 190.0
@@ -515,7 +532,8 @@ class HudCanvas(QWidget):
         # Friday konuşurken veya mikrofon aktif dinleme durumundayken yeşil.
         active_words = (
             "LISTEN", "LISTENING", "MIC", "MICROPHONE", "VOICE",
-            "SPEAK", "SPEAKING", "CONNECTED", "ONLINE", "RECORD"
+            "SPEAK", "SPEAKING", "CONNECTED", "ONLINE", "RECORD",
+            "CAMERA", "VISION", "OPTIC", "WEBCAM"
         )
         if bool(getattr(self, "speaking", False)) or any(w in raw for w in active_words):
             return "listening"
@@ -940,6 +958,360 @@ class HudCanvas(QWidget):
             "MEDPOV INTELLIGENCE CORE",
         )
 
+    # ------------------------------------------------------------------
+    # MEDPOV FRIDAY — Jarvis style camera vision mode
+    # ------------------------------------------------------------------
+
+    def _preferred_camera_index(self) -> int:
+        try:
+            cfg = json.loads(API_FILE.read_text(encoding="utf-8")) if API_FILE.exists() else {}
+            return int(cfg.get("camera_index", 0) or 0)
+        except Exception:
+            return 0
+
+    def _preferred_camera_backend(self) -> int:
+        if cv2 is None:
+            return 0
+        if _OS == "Windows" and hasattr(cv2, "CAP_DSHOW"):
+            return cv2.CAP_DSHOW
+        if _OS == "Darwin" and hasattr(cv2, "CAP_AVFOUNDATION"):
+            return cv2.CAP_AVFOUNDATION
+        return getattr(cv2, "CAP_ANY", 0)
+
+    def start_camera_mode(self, camera_index: int | None = None) -> bool:
+        """
+        Kamera açıldığında ana FRIDAY core görünümünü Jarvis tarzı kamera moduna alır.
+        Orta alanda kamera görüntüsü, sağ altta mini FRIDAY halkaları gösterilir.
+        """
+        self.camera_mode = True
+        self.state = "CAMERA"
+        self._camera_error = ""
+        self._camera_index = self._preferred_camera_index() if camera_index is None else int(camera_index)
+        with self._camera_lock:
+            self._camera_snapshot_bytes = None
+
+        if cv2 is None:
+            self._camera_error = "opencv-python yüklü değil"
+            self._camera_frame = None
+            self.update()
+            return False
+
+        try:
+            # Zaten açık ve frame geliyorsa aynı capture'ı kullanmaya devam et.
+            if self._camera is not None and self._camera_timer.isActive():
+                self.update()
+                return True
+
+            self.stop_camera_capture_only()
+            self._camera = cv2.VideoCapture(self._camera_index, self._preferred_camera_backend())
+
+            if not self._camera or not self._camera.isOpened():
+                self._camera_error = f"Kamera açılamadı: index {self._camera_index}"
+                self._camera = None
+                self.update()
+                return False
+
+            try:
+                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                self._camera.set(cv2.CAP_PROP_FPS, 30)
+            except Exception:
+                pass
+
+            self._camera_timer.start(30)
+            self.update()
+            return True
+
+        except Exception as exc:
+            self._camera_error = str(exc)
+            self._camera = None
+            self.update()
+            return False
+
+    def stop_camera_capture_only(self):
+        try:
+            if hasattr(self, "_camera_timer") and self._camera_timer.isActive():
+                self._camera_timer.stop()
+        except Exception:
+            pass
+
+        try:
+            if self._camera is not None:
+                self._camera.release()
+        except Exception:
+            pass
+
+        self._camera = None
+        self._camera_frame = None
+        with self._camera_lock:
+            self._camera_snapshot_bytes = None
+
+    def stop_camera_mode(self):
+        self.stop_camera_capture_only()
+        self.camera_mode = False
+        self._camera_error = ""
+        self.state = "IDLE"
+        self.update()
+
+    def _camera_tick(self):
+        if not self.camera_mode or self._camera is None:
+            return
+
+        try:
+            ok, frame = self._camera.read()
+            if not ok or frame is None:
+                self._camera_error = "Kamera görüntüsü alınamadı"
+                self.update()
+                return
+
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            bytes_per_line = ch * w
+
+            self._camera_frame = QImage(
+                rgb.data,
+                w,
+                h,
+                bytes_per_line,
+                QImage.Format.Format_RGB888,
+            ).copy()
+
+            # Vision modülü ayrı kamera açmaya çalışmasın diye periyodik JPEG snapshot sakla.
+            if (self._tick % 5 == 0) or self._camera_snapshot_bytes is None:
+                try:
+                    ok_jpg, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                    if ok_jpg:
+                        with self._camera_lock:
+                            self._camera_snapshot_bytes = jpg.tobytes()
+                except Exception:
+                    pass
+
+            self._camera_error = ""
+            self.update()
+
+        except Exception as exc:
+            self._camera_error = str(exc)
+            self.update()
+
+    def camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
+        """
+        screen_processor kamera analizi yaparken aynı kamera cihazını ikinci kez açmasın diye
+        canlı HUD tarafından üretilen son JPEG frame'i thread-safe şekilde döndürür.
+        """
+        deadline = time.time() + max(0.1, float(wait_seconds or 0.1))
+        while time.time() < deadline:
+            with self._camera_lock:
+                data = self._camera_snapshot_bytes
+                mime = self._camera_snapshot_mime
+            if data:
+                return data, mime
+            time.sleep(0.03)
+
+        raise RuntimeError(self._camera_error or "Kamera frame hazır değil")
+
+    def _draw_camera_grid(self, p: QPainter, w: float, h: float):
+        pal = self._pal()
+        p.save()
+
+        p.setPen(QPen(self._q("#8db8d8", 28), 1))
+        step = 42
+        drift = int(self._tick * 0.18) % step
+
+        for x in range(-step + drift, int(w) + step, step):
+            p.drawLine(x, 0, x, int(h))
+        for y in range(-step, int(h) + step, step):
+            p.drawLine(0, y, int(w), y)
+
+        p.setPen(QPen(self._q(pal["primary"], 15), 1))
+        small_step = 14
+        for x in range(0, int(w), small_step):
+            if x % step != 0:
+                p.drawLine(x, 0, x, int(h))
+        for y in range(0, int(h), small_step):
+            if y % step != 0:
+                p.drawLine(0, y, int(w), y)
+
+        p.restore()
+
+    def _draw_camera_corners(self, p: QPainter, rect: QRectF, color: str):
+        p.save()
+        corner = 46
+        pen = QPen(self._q(color, 155), 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+
+        l, r = rect.left(), rect.right()
+        t, b = rect.top(), rect.bottom()
+
+        p.drawLine(QPointF(l, t + corner), QPointF(l, t + 10))
+        p.drawLine(QPointF(l + 10, t), QPointF(l + corner, t))
+        p.drawLine(QPointF(r - corner, t), QPointF(r - 10, t))
+        p.drawLine(QPointF(r, t + 10), QPointF(r, t + corner))
+        p.drawLine(QPointF(l, b - corner), QPointF(l, b - 10))
+        p.drawLine(QPointF(l + 10, b), QPointF(l + corner, b))
+        p.drawLine(QPointF(r - corner, b), QPointF(r - 10, b))
+        p.drawLine(QPointF(r, b - 10), QPointF(r, b - corner))
+
+        p.restore()
+
+    def _fit_image_rect(self, image: QImage, bounds: QRectF) -> QRectF:
+        if image is None or image.isNull():
+            return bounds
+
+        iw = max(1, image.width())
+        ih = max(1, image.height())
+        image_ratio = iw / ih
+        bounds_ratio = bounds.width() / max(1, bounds.height())
+
+        if image_ratio > bounds_ratio:
+            target_w = bounds.width()
+            target_h = target_w / image_ratio
+        else:
+            target_h = bounds.height()
+            target_w = target_h * image_ratio
+
+        x = bounds.left() + (bounds.width() - target_w) / 2
+        y = bounds.top() + (bounds.height() - target_h) / 2
+        return QRectF(x, y, target_w, target_h)
+
+    def _draw_mini_friday_core(self, p: QPainter, w: float, h: float):
+        pal = self._pal()
+        mini_r = max(62.0, min(w, h) * 0.102)
+        cx = w - mini_r * 1.42
+        cy = h - mini_r * 1.30
+
+        p.save()
+        halo = QRadialGradient(QPointF(cx, cy), mini_r * 2.20)
+        halo.setColorAt(0.00, self._q(pal["primary"], 92))
+        halo.setColorAt(0.45, self._q(pal["primary"], 30))
+        halo.setColorAt(1.00, self._q("#000000", 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(halo))
+        p.drawEllipse(QPointF(cx, cy), mini_r * 2.15, mini_r * 2.15)
+
+        self._draw_outer_rings(p, cx, cy, mini_r)
+        self._draw_inner_tech(p, cx, cy, mini_r)
+
+        p.setPen(self._q("#f5fcff", 235))
+        p.setFont(QFont("Arial", max(10, int(mini_r * 0.17)), QFont.Weight.Black))
+        p.drawText(
+            QRectF(cx - mini_r * 0.78, cy - 12, mini_r * 1.56, 24),
+            Qt.AlignmentFlag.AlignCenter,
+            "F.R.I.D.A.Y",
+        )
+
+        p.setPen(self._q(pal["primary"], 180))
+        p.setFont(QFont("Courier New", max(7, int(mini_r * 0.075)), QFont.Weight.Bold))
+        p.drawText(
+            QRectF(cx - mini_r * 0.85, cy + mini_r * 0.28, mini_r * 1.70, 18),
+            Qt.AlignmentFlag.AlignCenter,
+            "VISION CORE",
+        )
+        p.restore()
+
+    def _draw_camera_mode(self, p: QPainter, w: float, h: float):
+        pal = self._pal()
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(self._q("#02050c", 255)))
+        p.drawRect(0, 0, int(w), int(h))
+
+        margin_x = max(42, int(w * 0.055))
+        margin_y = max(38, int(h * 0.075))
+        bottom_safe = max(112, int(h * 0.155))
+        camera_bounds = QRectF(margin_x, margin_y, w - margin_x * 2, h - margin_y - bottom_safe)
+
+        self._draw_camera_grid(p, w, h)
+
+        video_rect = camera_bounds
+        if self._camera_frame is not None and not self._camera_frame.isNull():
+            video_rect = self._fit_image_rect(self._camera_frame, camera_bounds)
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(video_rect, 18, 18)
+            p.setClipPath(clip)
+            p.drawImage(video_rect, self._camera_frame)
+
+            overlay = QLinearGradient(video_rect.left(), video_rect.top(), video_rect.right(), video_rect.bottom())
+            overlay.setColorAt(0.00, self._q("#0b1b2c", 70))
+            overlay.setColorAt(0.45, self._q("#000000", 18))
+            overlay.setColorAt(1.00, self._q("#000000", 88))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(overlay))
+            p.drawRoundedRect(video_rect, 18, 18)
+            p.restore()
+        else:
+            p.save()
+            p.setPen(QPen(self._q(pal["primary"], 95), 1))
+            p.setBrush(QBrush(self._q("#06101d", 150)))
+            p.drawRoundedRect(video_rect, 18, 18)
+            p.setPen(self._q("#b9f7ff", 180))
+            p.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
+            msg = self._camera_error or "CAMERA FEED WAITING..."
+            p.drawText(video_rect, Qt.AlignmentFlag.AlignCenter, msg)
+            p.restore()
+
+        vignette = QRadialGradient(QPointF(w * 0.50, h * 0.42), max(w, h) * 0.72)
+        vignette.setColorAt(0.00, self._q("#000000", 6))
+        vignette.setColorAt(0.56, self._q("#000000", 58))
+        vignette.setColorAt(1.00, self._q("#000000", 192))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(vignette))
+        p.drawRect(0, 0, int(w), int(h))
+
+        scan_y = video_rect.top() + ((self._tick * 2.4) % max(1, int(video_rect.height())))
+        scan = QLinearGradient(video_rect.left(), scan_y, video_rect.right(), scan_y)
+        scan.setColorAt(0.00, self._q(pal["primary"], 0))
+        scan.setColorAt(0.50, self._q("#b9f7ff", 95))
+        scan.setColorAt(1.00, self._q(pal["primary"], 0))
+        p.setPen(QPen(QBrush(scan), 2))
+        p.drawLine(QPointF(video_rect.left(), scan_y), QPointF(video_rect.right(), scan_y))
+
+        p.setPen(QPen(self._q(pal["primary"], 95), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(video_rect.adjusted(-1, -1, 1, 1), 18, 18)
+        self._draw_camera_corners(p, video_rect.adjusted(-8, -8, 8, 8), pal["primary"])
+
+        p.save()
+        p.setPen(self._q("#b9f7ff", 210))
+        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.drawText(
+            QRectF(video_rect.left(), max(8, video_rect.top() - 28), 380, 22),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "CAMERA VISION // LIVE OPTICS",
+        )
+
+        p.setPen(self._q(pal["primary"], 170))
+        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.drawText(
+            QRectF(video_rect.right() - 360, max(8, video_rect.top() - 28), 360, 22),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            "MEDPOV FRIDAY HOLOGRAPHIC INPUT",
+        )
+        p.restore()
+
+        p.save()
+        icon_y = h - 46
+        icon_x = w * 0.5 - 72
+        for i, label in enumerate(["◉", "□", "◌", "▣", "♪", "⌁"]):
+            x = icon_x + i * 28
+            p.setPen(QPen(self._q("#8db8d8", 115), 1))
+            p.setBrush(QBrush(self._q("#07111f", 150)))
+            p.drawRoundedRect(QRectF(x, icon_y, 18, 18), 5, 5)
+            p.setPen(self._q("#d8faff", 155))
+            p.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            p.drawText(QRectF(x, icon_y, 18, 18), Qt.AlignmentFlag.AlignCenter, label)
+        p.restore()
+
+        p.save()
+        p.setPen(self._q(pal["primary"], 210))
+        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.drawText(QRectF(24, h - 58, 240, 22), Qt.AlignmentFlag.AlignLeft, "● LIVE CAMERA FEED")
+        p.restore()
+
+        self._draw_mini_friday_core(p, w, h)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -953,6 +1325,10 @@ class HudCanvas(QWidget):
         cx = w / 2.0
         cy = h / 2.0
         r = min(w, h) * 0.335
+
+        if self.camera_mode:
+            self._draw_camera_mode(p, w, h)
+            return
 
         if self.speaking:
             r *= 1.0 + 0.012 * math.sin(self._tick * 0.25)
@@ -1477,9 +1853,11 @@ class SetupOverlay(QWidget):
 
 
 class MainWindow(QMainWindow):
-    _log_sig     = pyqtSignal(str)
-    _state_sig   = pyqtSignal(str)
-    _standby_sig = pyqtSignal(bool)
+    _log_sig          = pyqtSignal(str)
+    _state_sig        = pyqtSignal(str)
+    _standby_sig      = pyqtSignal(bool)
+    _camera_start_sig = pyqtSignal(object)
+    _camera_stop_sig  = pyqtSignal()
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1538,6 +1916,8 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
         self._standby_sig.connect(self._set_standby)
+        self._camera_start_sig.connect(self._start_camera_mode_now)
+        self._camera_stop_sig.connect(self._stop_camera_mode_now)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -2126,11 +2506,39 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
     def _apply_state(self, state: str):
-        if self._standby and not self._muted and state not in ("MUTED",):
+        if self._standby and not self._muted and state not in ("MUTED", "CAMERA"):
             state = "STANDBY"
         self.hud.state    = state
         self.hud.muted    = self._muted
         self.hud.speaking = (state == "SPEAKING")
+
+    def start_camera_mode(self, camera_index: int | None = None) -> bool:
+        self._camera_start_sig.emit(camera_index)
+        return True
+
+    def _start_camera_mode_now(self, camera_index=None):
+        ok = self.hud.start_camera_mode(camera_index=camera_index)
+        if ok:
+            self._log.append_log("SYS: CAMERA VISION online.")
+        else:
+            self._log.append_log(f"ERR: Kamera modu açılamadı — {self.hud._camera_error}")
+
+    def stop_camera_mode(self):
+        self._camera_stop_sig.emit()
+
+    def _stop_camera_mode_now(self):
+        self.hud.stop_camera_mode()
+        self._log.append_log("SYS: CAMERA VISION offline.")
+
+    def capture_camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
+        return self.hud.camera_snapshot(wait_seconds=wait_seconds)
+
+    def closeEvent(self, event):
+        try:
+            self.hud.stop_camera_capture_only()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
@@ -2317,6 +2725,15 @@ class JarvisUI:
             self.set_state("STANDBY")
         elif not self.muted:
             self.set_state("LISTENING")
+
+    def start_camera_mode(self, camera_index: int | None = None) -> bool:
+        return self._win.start_camera_mode(camera_index=camera_index)
+
+    def stop_camera_mode(self):
+        self._win.stop_camera_mode()
+
+    def capture_camera_snapshot(self, wait_seconds: float = 2.5) -> tuple[bytes, str]:
+        return self._win.capture_camera_snapshot(wait_seconds=wait_seconds)
 
 
 # Compatibility alias for the MEDPOV FRIDAY build.
