@@ -686,10 +686,14 @@ def screen_process(
                 return True
             result = re.sub(r"\s+", " ", str(result or "")).strip()
             if result:
-                if player:
+                if params.get("_return_text"):
+                    print(f"[OpenAI Vision] 💬 {result}")
+                    return result
+                if player and not params.get("_silent"):
                     player.write_log(f"FRIDAY: {result}")
                 print(f"[OpenAI Vision] 💬 {result}")
-                _speak_openai_result(params, player, result)
+                if not params.get("_silent"):
+                    _speak_openai_result(params, player, result)
                 return True
             raise RuntimeError("OpenAI Vision returned an empty response.")
         except Exception as exc:
@@ -699,6 +703,8 @@ def screen_process(
             print(f"[OpenAI Vision] ❌ {exc}")
             if _ai_provider() == "openai":
                 try:
+                    if params.get("_return_text"):
+                        return "OpenAI Vision başarısız: " + str(exc)[:180]
                     if player:
                         player.write_log("ERR: OpenAI Vision başarısız — " + str(exc)[:180])
                 except Exception:

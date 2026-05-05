@@ -203,7 +203,7 @@ class FridaySettingsDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.ai_provider_combo = QComboBox()
         self.ai_provider_combo.addItem("Gemini · mevcut canlı ses + tool orchestration", "gemini")
-        self.ai_provider_combo.addItem("OpenAI · komut/vision beyni + doğal OpenAI TTS", "openai")
+        self.ai_provider_combo.addItem("OpenAI Realtime · bağımsız canlı ses + tool orchestration", "openai")
         self.ai_provider_combo.addItem("Auto / Fallback · Gemini ana, OpenAI yedek", "auto")
         self.fallback_provider_combo = QComboBox()
         self.fallback_provider_combo.addItem("OpenAI", "openai")

@@ -1,4 +1,4 @@
-﻿google-genai
+google-genai
 google-generativeai
 openai>=1.40.0
 PyQt6
@@ -22,3 +22,4 @@ send2trash
 youtube-transcript-api
 pywinauto
 python-pptx
+websockets>=13.0

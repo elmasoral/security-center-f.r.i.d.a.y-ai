@@ -6,6 +6,8 @@ import sys
 import traceback
 import time
 import difflib
+import base64
+from urllib.parse import quote_plus
 from pathlib import Path
 
 import sounddevice as sd
@@ -52,6 +54,8 @@ try:
         get_friday_ai_provider,
         get_friday_ai_provider_label,
         get_openai_api_key,
+        get_openai_realtime_model,
+        get_openai_voice,
     )
     FRIDAY_SETTINGS = bootstrap_environment()
     FRIDAY_VOICE_NAME = get_friday_voice_name()
@@ -61,6 +65,8 @@ try:
     FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = get_friday_response_language_instruction()
     FRIDAY_AI_PROVIDER = get_friday_ai_provider()
     FRIDAY_AI_PROVIDER_LABEL = get_friday_ai_provider_label()
+    FRIDAY_OPENAI_REALTIME_MODEL = get_openai_realtime_model()
+    FRIDAY_OPENAI_VOICE = get_openai_voice()
 except Exception as _friday_settings_error:
     print(f"[FRIDAY] Settings bridge warning: {_friday_settings_error}")
     FRIDAY_VOICE_NAME = os.environ.get("FRIDAY_VOICE_NAME", "Aoede")
@@ -73,6 +79,8 @@ except Exception as _friday_settings_error:
     FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = "Her zaman Türkçe cevap ver." if FRIDAY_RESPONSE_LANGUAGE == "tr" else "Always answer in English."
     FRIDAY_AI_PROVIDER = os.environ.get("FRIDAY_AI_PROVIDER", "gemini")
     FRIDAY_AI_PROVIDER_LABEL = {"gemini":"Gemini","openai":"OpenAI","auto":"Auto / Fallback"}.get(FRIDAY_AI_PROVIDER, "Gemini")
+    FRIDAY_OPENAI_REALTIME_MODEL = os.environ.get("FRIDAY_OPENAI_REALTIME_MODEL", "gpt-realtime")
+    FRIDAY_OPENAI_VOICE = os.environ.get("FRIDAY_OPENAI_VOICE", "marin")
 # --- /MEDPOV FRIDAY runtime settings bridge ---
 
 
@@ -636,6 +644,21 @@ class JarvisLive:
         self._last_openai_tool_sig = ""
         self._last_openai_tool_ts = 0.0
 
+        # OpenAI Realtime provider runtime. In OpenAI mode FRIDAY no longer
+        # starts a Gemini Live session for microphone/transcription. Audio in,
+        # reasoning, tool calling, and audio out all live on this websocket.
+        self._openai_realtime_mode = False
+        self._openai_ws = None
+        self._openai_send_queue = None
+        self._openai_audio_queue = None
+        self._openai_loop = None
+        self._openai_turn_done_event = None
+        self._openai_function_args = {}
+        self._openai_function_names = {}
+        self._openai_assistant_buf = []
+        self._openai_last_user_norm = ""
+        self._openai_last_user_ts = 0.0
+
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
         repl = str.maketrans({"ı":"i", "ğ":"g", "ü":"u", "ş":"s", "ö":"o", "ç":"c"})
@@ -715,7 +738,432 @@ class JarvisLive:
     def _use_openai_brain(self) -> bool:
         return self._command_provider() == "openai"
 
+    def _use_openai_realtime(self) -> bool:
+        return self._command_provider() == "openai"
+
+    def _openai_realtime_model(self) -> str:
+        return str(globals().get("FRIDAY_OPENAI_REALTIME_MODEL", "") or "gpt-realtime").strip()
+
+    def _openai_realtime_voice(self) -> str:
+        return str(globals().get("FRIDAY_OPENAI_VOICE", "") or "marin").strip()
+
+    def _to_openai_realtime_tools(self) -> list[dict]:
+        def lower_schema(value):
+            if isinstance(value, dict):
+                out = {}
+                for k, v in value.items():
+                    if k == "type" and isinstance(v, str):
+                        out[k] = v.lower()
+                    elif k == "properties" and isinstance(v, dict):
+                        out[k] = {name: lower_schema(schema) for name, schema in v.items()}
+                    elif k == "items":
+                        out[k] = lower_schema(v)
+                    else:
+                        out[k] = lower_schema(v)
+                return out
+            if isinstance(value, list):
+                return [lower_schema(x) for x in value]
+            return value
+
+        tools = []
+        for decl in TOOL_DECLARATIONS:
+            name = str(decl.get("name") or "").strip()
+            if not name:
+                continue
+            params = lower_schema(decl.get("parameters") or {"type": "object", "properties": {}})
+            params.setdefault("type", "object")
+            tools.append({
+                "type": "function",
+                "name": name,
+                "description": str(decl.get("description") or ""),
+                "parameters": params,
+            })
+        return tools
+
+    def _openai_realtime_instructions(self) -> str:
+        from datetime import datetime
+        memory = load_memory()
+        mem_str = format_memory_for_prompt(memory)
+        now = datetime.now().strftime("%A, %B %d, %Y — %I:%M %p")
+        base = _load_system_prompt()
+        parts = [
+            "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center.",
+            "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
+            "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
+            "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center. For visual questions about the user's hand/object/room, call screen_process with angle='camera'.",
+            "When a tool returns a direct result, summarize it in a short human sentence.",
+            f"Current date/time: {now}.",
+            FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION,
+            base,
+        ]
+        if mem_str:
+            parts.append(mem_str)
+        return "\n\n".join(p for p in parts if p)
+
+    def _openai_realtime_session_update(self) -> dict:
+        return {
+            "type": "session.update",
+            "session": {
+                "type": "realtime",
+                "modalities": ["text", "audio"],
+                "instructions": self._openai_realtime_instructions(),
+                "voice": self._openai_realtime_voice(),
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "input_audio_transcription": {
+                    "model": "gpt-4o-mini-transcribe",
+                    "language": "tr" if FRIDAY_RESPONSE_LANGUAGE == "tr" else "en",
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.52,
+                    "prefix_padding_ms": 260,
+                    "silence_duration_ms": 620,
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+                "tools": self._to_openai_realtime_tools(),
+                "tool_choice": "auto",
+            },
+        }
+
+    def _queue_openai_event_threadsafe(self, event: dict) -> bool:
+        q = getattr(self, "_openai_send_queue", None)
+        loop = getattr(self, "_openai_loop", None)
+        if not q or not loop:
+            return False
+        def _push():
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    q.put_nowait(event)
+                except Exception:
+                    pass
+        try:
+            loop.call_soon_threadsafe(_push)
+            return True
+        except Exception:
+            return False
+
+    def _send_openai_text_turn(self, text: str) -> bool:
+        raw = (text or "").strip()
+        if not raw:
+            return False
+        now = time.time()
+        norm = self._norm_text(raw)
+        if norm and norm == str(getattr(self, "_openai_last_user_norm", "") or "") and now - float(getattr(self, "_openai_last_user_ts", 0.0) or 0.0) < 1.2:
+            return True
+        self._openai_last_user_norm = norm
+        self._openai_last_user_ts = now
+        ok1 = self._queue_openai_event_threadsafe({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": raw}],
+            },
+        })
+        ok2 = self._queue_openai_event_threadsafe({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]},
+        })
+        return bool(ok1 and ok2)
+
+    def _openai_realtime_say(self, text: str) -> None:
+        msg = (text or "").strip()
+        if not msg:
+            return
+        self._send_openai_text_turn("Sadece şu sonucu kullanıcıya doğal şekilde söyle, yeni işlem başlatma: " + msg)
+
+    def _openai_realtime_stop_audio(self) -> None:
+        q = getattr(self, "_openai_audio_queue", None)
+        if q:
+            try:
+                while True:
+                    q.get_nowait()
+            except Exception:
+                pass
+        self.set_speaking(False)
+
+    async def _openai_execute_tool_result(self, ws, name: str, args: dict, call_id: str) -> None:
+        name = str(name or "").strip()
+        args = dict(args or {})
+        call_id = str(call_id or "").strip() or f"call_{int(time.time()*1000)}"
+        self.ui.set_state("THINKING")
+        print(f"[OpenAI RT] 🔧 {name} {args}")
+        output = "Done."
+        try:
+            if name == "screen_process":
+                angle = str(args.get("angle") or "screen").lower().strip()
+                if angle == "camera":
+                    cancel_vision_requests()
+                    if hasattr(self.ui, "start_camera_mode"):
+                        self.ui.start_camera_mode(camera_index=None)
+                    args["_camera_started"] = True
+                args["_return_text"] = True
+                args["_silent"] = True
+                loop = asyncio.get_event_loop()
+                r = await loop.run_in_executor(None, lambda: screen_process(parameters=args, response=None, player=self.ui, session_memory=None))
+                output = str(r or "Görüntü analizi tamamlandı ama net sonuç alınamadı.")
+            else:
+                shim = _OpenAIToolCallShim(call_id, name, args)
+                fr = await self._execute_tool(shim)
+                payload = getattr(fr, "response", None) or {}
+                if isinstance(payload, dict):
+                    output = str(payload.get("result") or payload or "Done.")
+                else:
+                    output = str(payload or "Done.")
+        except Exception as exc:
+            output = f"Tool '{name}' failed: {exc}"
+            traceback.print_exc()
+
+        await ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps({"result": output}, ensure_ascii=False),
+            },
+        }, ensure_ascii=False))
+        await ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]},
+        }, ensure_ascii=False))
+
+    def _maybe_tool_from_output_item(self, event: dict) -> tuple[str, dict, str] | None:
+        item = event.get("item") or event.get("output_item") or {}
+        if not isinstance(item, dict):
+            return None
+        if str(item.get("type") or "") not in {"function_call", "tool_call"}:
+            return None
+        name = str(item.get("name") or "").strip()
+        call_id = str(item.get("call_id") or item.get("id") or event.get("call_id") or "").strip()
+        raw_args = item.get("arguments") or item.get("args") or "{}"
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+        except Exception:
+            args = {}
+        return name, args, call_id
+
+    async def _openai_ws_send_loop(self, ws):
+        while True:
+            event = await self._openai_send_queue.get()
+            await ws.send(json.dumps(event, ensure_ascii=False))
+
+    async def _openai_listen_audio(self):
+        print("[OpenAI RT] 🎤 Mic started")
+        loop = asyncio.get_event_loop()
+        sample_rate = 24000
+
+        def callback(indata, frames, time_info, status):
+            if self.ui.muted or self.ui.standby:
+                return
+            with self._speaking_lock:
+                speaking = self._is_speaking
+            # Speaker->microphone echo is the biggest practical problem on a desktop.
+            # Keep mic quiet while FRIDAY is talking; text commands still work.
+            if speaking:
+                return
+            data = indata.tobytes()
+            b64 = base64.b64encode(data).decode("ascii")
+            def _safe_push():
+                try:
+                    self._openai_send_queue.put_nowait({"type": "input_audio_buffer.append", "audio": b64})
+                except asyncio.QueueFull:
+                    pass
+            loop.call_soon_threadsafe(_safe_push)
+
+        try:
+            with sd.InputStream(
+                samplerate=sample_rate,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SIZE,
+                callback=callback,
+            ):
+                print("[OpenAI RT] 🎤 Mic stream open")
+                while True:
+                    await asyncio.sleep(0.1)
+        except Exception as exc:
+            print(f"[OpenAI RT] ❌ Mic: {exc}")
+            raise
+
+    async def _openai_play_audio(self):
+        print("[OpenAI RT] 🔊 Play started")
+        stream = None
+        try:
+            stream = sd.RawOutputStream(
+                samplerate=24000,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SIZE,
+            )
+            stream.start()
+        except Exception as exc:
+            print(f"[OpenAI RT] ❌ Audio output disabled: {exc}")
+            self.ui.write_log("SYS: OpenAI audio output unavailable. FRIDAY continues in text/log mode.")
+            while True:
+                await self._openai_audio_queue.get()
+
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(self._openai_audio_queue.get(), timeout=0.12)
+                except asyncio.TimeoutError:
+                    if self._openai_turn_done_event and self._openai_turn_done_event.is_set() and self._openai_audio_queue.empty():
+                        self.set_speaking(False)
+                        self._openai_turn_done_event.clear()
+                    continue
+                if self.ui.standby:
+                    self.set_speaking(False)
+                    continue
+                self.set_speaking(True)
+                await asyncio.to_thread(stream.write, chunk)
+        except Exception as exc:
+            print(f"[OpenAI RT] ❌ Play: {exc}")
+            raise
+        finally:
+            self.set_speaking(False)
+            try:
+                if stream:
+                    stream.stop(); stream.close()
+            except Exception:
+                pass
+
+    async def _openai_recv_loop(self, ws):
+        print("[OpenAI RT] 👂 Recv started")
+        assistant_parts: list[str] = []
+        text_parts: list[str] = []
+        while True:
+            raw = await ws.recv()
+            try:
+                event = json.loads(raw)
+            except Exception:
+                continue
+            etype = str(event.get("type") or "")
+
+            if etype == "error":
+                err = event.get("error") or {}
+                msg = str(err.get("message") or event)
+                print(f"[OpenAI RT] ❌ {msg}")
+                self.ui.write_log("ERR: OpenAI Realtime — " + msg[:180])
+                continue
+
+            if etype in {"session.created", "session.updated"}:
+                print(f"[OpenAI RT] ✅ {etype}")
+                continue
+
+            if etype == "input_audio_buffer.speech_started":
+                self.ui.set_state("LISTENING")
+                continue
+
+            if etype in {"input_audio_buffer.speech_stopped", "input_audio_buffer.committed"}:
+                self.ui.set_state("THINKING")
+                continue
+
+            if etype in {"conversation.item.input_audio_transcription.completed", "conversation.item.input_audio_transcription.done"}:
+                txt = _clean_transcript(str(event.get("transcript") or event.get("text") or ""))
+                if txt:
+                    norm = self._norm_text(txt)
+                    now = time.time()
+                    if not (norm == self._last_voice_final_norm and now - self._last_voice_final_ts < 2.5):
+                        self._last_voice_final_norm = norm
+                        self._last_voice_final_ts = now
+                        self.ui.write_log(f"You: {txt}")
+                continue
+
+            if etype in {"response.audio.delta", "response.output_audio.delta"}:
+                delta = event.get("delta") or event.get("audio") or ""
+                if delta:
+                    try:
+                        self._openai_audio_queue.put_nowait(base64.b64decode(delta))
+                    except Exception:
+                        pass
+                continue
+
+            if etype in {"response.audio_transcript.delta", "response.output_audio_transcript.delta"}:
+                delta = str(event.get("delta") or "")
+                if delta:
+                    assistant_parts.append(delta)
+                continue
+
+            if etype in {"response.text.delta", "response.output_text.delta"}:
+                delta = str(event.get("delta") or "")
+                if delta:
+                    text_parts.append(delta)
+                continue
+
+            if etype.endswith("function_call_arguments.delta"):
+                call_id = str(event.get("call_id") or event.get("item_id") or event.get("output_index") or "")
+                if call_id:
+                    self._openai_function_args[call_id] = self._openai_function_args.get(call_id, "") + str(event.get("delta") or "")
+                    if event.get("name"):
+                        self._openai_function_names[call_id] = str(event.get("name") or "")
+                continue
+
+            if etype.endswith("function_call_arguments.done"):
+                call_id = str(event.get("call_id") or event.get("item_id") or event.get("output_index") or "")
+                name = str(event.get("name") or self._openai_function_names.get(call_id, "") or "")
+                raw_args = str(event.get("arguments") or self._openai_function_args.get(call_id, "{}") or "{}")
+                try:
+                    args = json.loads(raw_args)
+                except Exception:
+                    args = {}
+                if name:
+                    asyncio.create_task(self._openai_execute_tool_result(ws, name, args, call_id))
+                continue
+
+            if etype == "response.output_item.done":
+                maybe = self._maybe_tool_from_output_item(event)
+                if maybe:
+                    name, args, call_id = maybe
+                    asyncio.create_task(self._openai_execute_tool_result(ws, name, args, call_id))
+                continue
+
+            if etype in {"response.audio.done", "response.output_audio.done"}:
+                if self._openai_turn_done_event:
+                    self._openai_turn_done_event.set()
+                continue
+
+            if etype == "response.done":
+                # Some SDK/API variants only expose tool calls inside response.done.
+                try:
+                    resp = event.get("response") or {}
+                    for item in resp.get("output", []) or []:
+                        if isinstance(item, dict) and item.get("type") == "function_call":
+                            name = str(item.get("name") or "")
+                            call_id = str(item.get("call_id") or item.get("id") or "")
+                            raw_args = item.get("arguments") or "{}"
+                            try:
+                                args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+                            except Exception:
+                                args = {}
+                            if name:
+                                asyncio.create_task(self._openai_execute_tool_result(ws, name, args, call_id))
+                except Exception:
+                    pass
+                full = re.sub(r"\s+", " ", "".join(assistant_parts or text_parts)).strip()
+                if full:
+                    self.ui.write_log("FRIDAY: " + full)
+                assistant_parts = []
+                text_parts = []
+                if self._openai_turn_done_event:
+                    self._openai_turn_done_event.set()
+                if self.ui.standby:
+                    self.ui.set_state("STANDBY")
+                elif not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                continue
+
     def _local_tts(self, text: str) -> None:
+        if bool(getattr(self, "_openai_realtime_mode", False)):
+            self._openai_realtime_say(text)
+            return
         try:
             from tools.friday_local_tts import speak_text_async
             if bool(getattr(self.ui, "muted", False)):
@@ -1015,14 +1463,25 @@ class JarvisLive:
         return True
 
     def _on_text_command(self, text: str):
+        # In full OpenAI Realtime mode, keep command flow inside OpenAI.
+        # Only hard local mode commands remain immediate; visual questions are
+        # routed to OpenAI so it can call screen_process and speak the result in
+        # the same low-latency voice session.
         if self._handle_friday_mode_command(text, source="text"):
             self._suppress_model_output(2.5)
+            return
+        if self._handle_security_center_direct_command(text):
+            return
+        if bool(getattr(self, "_openai_realtime_mode", False)):
+            raw = (text or "").strip()
+            if raw:
+                self.ui.write_log(f"You: {raw}")
+                if not self._send_openai_text_turn(raw):
+                    self.ui.write_log("ERR: OpenAI Realtime bağlantısı hazır değil.")
             return
         if self._looks_like_camera_vision_request(text):
             self._suppress_model_output(5.5)
             self._start_direct_camera_vision(text, source="text")
-            return
-        if self._handle_security_center_direct_command(text):
             return
         if self._use_openai_brain():
             self._suppress_model_output(6.0)
@@ -1053,6 +1512,9 @@ class JarvisLive:
         if self.ui.standby:
             if text:
                 self.ui.write_log(f"FRIDAY: {text}")
+            return
+        if bool(getattr(self, "_openai_realtime_mode", False)):
+            self._openai_realtime_say(text)
             return
         if not self._loop or not self.session:
             return
@@ -1599,6 +2061,98 @@ class JarvisLive:
             stream.stop()
             stream.close()
 
+    async def run_openai_realtime(self):
+        """Run FRIDAY with OpenAI Realtime only.
+
+        This path intentionally does not create a Gemini Live session. It uses
+        one OpenAI websocket for microphone input, reasoning/tool calls, and
+        streamed voice output, which removes the v2.7.x Gemini-STT -> OpenAI ->
+        TTS bridge latency and echo loop.
+        """
+        try:
+            import websockets  # type: ignore
+        except Exception as exc:
+            self.ui.write_log("ERR: websockets paketi eksik. Çalıştır: pip install websockets")
+            raise RuntimeError("websockets package is missing") from exc
+
+        api_key = (get_openai_api_key() or os.environ.get("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            self.ui.write_log("ERR: OpenAI API key eksik. Ayarlar > OpenAI alanından ekle.")
+            raise RuntimeError("OpenAI API key is empty")
+
+        self._openai_realtime_mode = True
+        model = self._openai_realtime_model()
+        url = "wss://api.openai.com/v1/realtime?model=" + quote_plus(model)
+        headers = {
+            "Authorization": "Bearer " + api_key,
+            "OpenAI-Beta": "realtime=v1",
+        }
+
+        while True:
+            try:
+                print("[OpenAI RT] 🔌 Connecting...")
+                print(f"[OpenAI RT] 🎙 Voice loaded: {self._openai_realtime_voice()} | Model: {model} | Provider: OpenAI Realtime")
+                self.ui.set_state("THINKING")
+                async with websockets.connect(
+                    url,
+                    additional_headers=headers,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_size=8 * 1024 * 1024,
+                    max_queue=64,
+                ) as ws:
+                    self._openai_ws = ws
+                    self._openai_loop = asyncio.get_event_loop()
+                    self._openai_send_queue = asyncio.Queue(maxsize=80)
+                    self._openai_audio_queue = asyncio.Queue(maxsize=120)
+                    self._openai_turn_done_event = asyncio.Event()
+                    self.audio_in_queue = self._openai_audio_queue
+                    self.out_queue = self._openai_send_queue
+                    self.session = None
+                    self._loop = self._openai_loop
+                    self._wake_audio_queue = asyncio.Queue(maxsize=8)
+                    self._openai_function_args = {}
+                    self._openai_function_names = {}
+
+                    await ws.send(json.dumps(self._openai_realtime_session_update(), ensure_ascii=False))
+                    print("[OpenAI RT] ✅ Connected.")
+                    self.ui.set_state("STANDBY" if self.ui.standby else "LISTENING")
+                    self.ui.write_log("SYS: MEDPOV FRIDAY online.")
+                    self.ui.write_log("SYS: OpenAI Realtime provider online.")
+
+                    # No Gemini vision warmup in OpenAI mode. screen_process uses
+                    # OpenAI Vision directly when the provider is OpenAI.
+                    async with asyncio.TaskGroup() as tg:
+                        tg.create_task(self._openai_ws_send_loop(ws))
+                        tg.create_task(self._openai_listen_audio())
+                        tg.create_task(self._openai_recv_loop(ws))
+                        tg.create_task(self._openai_play_audio())
+                        tg.create_task(self._wake_word_worker())
+
+            except BaseExceptionGroup as eg:
+                for exc in eg.exceptions:
+                    print(f"[OpenAI RT] ⚠️ realtime task stopped: {exc}")
+                    traceback.print_exception(type(exc), exc, exc.__traceback__)
+            except Exception as exc:
+                print(f"[OpenAI RT] ⚠️ {exc}")
+                traceback.print_exc()
+            finally:
+                self._openai_ws = None
+                self._openai_send_queue = None
+                self._openai_audio_queue = None
+                self._openai_loop = None
+                self._openai_turn_done_event = None
+                self._openai_function_args = {}
+                self._openai_function_names = {}
+                self._openai_realtime_stop_audio()
+                try:
+                    cancel_vision_requests()
+                except Exception:
+                    pass
+            self.ui.set_state("THINKING")
+            print("[OpenAI RT] 🔄 Reconnecting in 2s...")
+            await asyncio.sleep(2)
+
     async def run(self):
         client = genai.Client(
             api_key=_get_api_key(),
@@ -1666,7 +2220,10 @@ def main():
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
         try:
-            asyncio.run(jarvis.run())
+            if jarvis._use_openai_realtime():
+                asyncio.run(jarvis.run_openai_realtime())
+            else:
+                asyncio.run(jarvis.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 

@@ -1,3 +1,91 @@
+# MEDPOV F.R.I.D.A.Y v2.8.0 — Full OpenAI Realtime Provider Patch
+
+Bu sürüm, OpenAI modunu v2.7.x hibrit köprü yapısından çıkarıp Gemini'den bağımsız bir canlı OpenAI Realtime provider haline getirir.
+
+## Ana Değişiklik
+
+v2.7.x OpenAI modu şu şekilde çalışıyordu:
+
+```txt
+Mikrofon / canlı transcript: Gemini Live
+Komut beyni: OpenAI
+Kamera analizi: OpenAI Vision
+Ses çıkışı: OpenAI TTS
+```
+
+v2.8.0 OpenAI modu artık şu şekilde çalışır:
+
+```txt
+Mikrofon girişi: OpenAI Realtime
+Canlı konuşma / düşünme: OpenAI Realtime
+Tool/function calling: OpenAI Realtime
+Ses çıkışı: OpenAI Realtime streamed audio
+Kamera/görüntü analizi: OpenAI Vision tool sonucu olarak OpenAI Realtime'a döner
+```
+
+## Neler Eklendi?
+
+- OpenAI provider seçiliyken Gemini Live oturumu artık başlatılmaz.
+- OpenAI Realtime WebSocket bağlantısı eklendi.
+- Mikrofon PCM16 ses akışı doğrudan OpenAI Realtime'a gönderilir.
+- OpenAI Realtime streamed audio cevabı doğrudan FRIDAY ses çıkışına basılır.
+- OpenAI Realtime tool/function calling desteği eklendi.
+- `screen_process` kamera/görüntü analizleri tool sonucu olarak OpenAI Realtime'a döner.
+- OpenAI Realtime üzerinden doğal tek oturumlu cevap akışı sağlandı.
+- v2.7.x'teki Gemini transcript → OpenAI command → OpenAI TTS gecikmesi kaldırıldı.
+- Hoparlör → mikrofon → kendi cevabına cevap verme riski azaltıldı.
+- OpenAI provider modunda Gemini Vision warmup devre dışı bırakıldı.
+- OpenAI ayar açıklamaları güncellendi.
+- Footer sürümü `v2.8.0` olarak güncellendi.
+
+## Güncellenen Dosyalar
+
+```txt
+main.py
+actions/screen_processor.py
+tools/friday_settings_dialog.py
+requirements.txt
+README.md
+PATCH_NOTES_TR.md
+```
+
+## Kurulum
+
+Patch içindeki dosyaları proje köküne aynı klasör yapısıyla kopyalayın.
+
+Sonra:
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+FRIDAY'i tamamen kapatıp yeniden açın.
+
+## Önerilen Ayar
+
+```txt
+AI Provider: OpenAI Realtime · bağımsız canlı ses + tool orchestration
+Fallback: OpenAI
+OpenAI Realtime model: gpt-realtime
+OpenAI voice: marin veya cedar
+```
+
+## Test Komutları
+
+```txt
+Friday selam.
+Şu an elimde ne tutuyorum?
+Kamerayı kapat.
+Güvenlik merkezi ile bağlantı nasıl?
+```
+
+## Not
+
+OpenAI Realtime provider artık Gemini'den bağımsızdır. Gemini sadece AI Provider olarak Gemini seçildiğinde çalışır.
+
+
 # MEDPOV F.R.I.D.A.Y v2.7.1 — OpenAI Natural Voice Patch
 
 Bu patch v2.7.0 üzerine uygulanır.
