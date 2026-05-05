@@ -59,7 +59,7 @@ BASE_DIR   = _base_dir()
 CONFIG_DIR = BASE_DIR / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
 
-_DEFAULT_W, _DEFAULT_H = 1600, 1100
+_DEFAULT_W, _DEFAULT_H = 1850, 1100
 _MIN_W,     _MIN_H     = 1040, 640
 _LEFT_W  = 330
 _RIGHT_W = 470
