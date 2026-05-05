@@ -61,34 +61,33 @@ API_FILE   = CONFIG_DIR / "api_keys.json"
 
 _DEFAULT_W, _DEFAULT_H = 1600, 1100
 _MIN_W,     _MIN_H     = 1040, 640
-_LEFT_W  = 205
-_RIGHT_W = 385
-
+_LEFT_W  = 310
+_RIGHT_W = 430
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#02040b"
-    PANEL     = "#06101d"
-    PANEL2    = "#081729"
-    BORDER    = "#15365d"
-    BORDER_B  = "#1aa7ff"
-    BORDER_A  = "#255c91"
+    BG        = "#020711"
+    PANEL     = "#061421"
+    PANEL2    = "#081b2c"
+    BORDER    = "#123a5a"
+    BORDER_B  = "#19d7ff"
+    BORDER_A  = "#1f5f86"
     PRI       = "#28e9ff"
-    PRI_DIM   = "#176d93"
-    PRI_GHO   = "#051b2c"
+    PRI_DIM   = "#1685b4"
+    PRI_GHO   = "#05263a"
     ACC       = "#ff9f1c"
     ACC2      = "#ffd166"
     GREEN     = "#22f2a8"
     GREEN_D   = "#12845e"
     RED       = "#ff3b6b"
     MUTED_C   = "#ff4d8d"
-    TEXT      = "#b9f7ff"
-    TEXT_DIM  = "#6888a3"
-    TEXT_MED  = "#8ed8ef"
+    TEXT      = "#c8f7ff"
+    TEXT_DIM  = "#7aa0ba"
+    TEXT_MED  = "#9bdff2"
     WHITE     = "#f5fcff"
-    DARK      = "#040912"
-    BAR_BG    = "#081522"
+    DARK      = "#040b15"
+    BAR_BG    = "#0b2032"
     VIOLET    = "#8b5cf6"
     GOLD      = "#ffc857"
 
@@ -274,13 +273,13 @@ class SecuritySynopsisWidget(QFrame):
         super().__init__(parent)
         self._loading = False
         self._last_ok = False
-        self.setFixedHeight(202)
-        self.setMinimumWidth(120)
+        self.setFixedHeight(216)
+        self.setMinimumWidth(160)
         self.setStyleSheet(f"""
             QFrame {{
-                background: rgba(6, 16, 29, 0.94);
-                border: 1px solid {C.BORDER_A};
-                border-radius: 12px;
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 rgba(7, 24, 38, 0.96), stop:1 rgba(3, 10, 20, 0.98));
+                border: 1px solid rgba(40, 233, 255, 0.28);
+                border-radius: 16px;
             }}
             QLabel {{
                 background: transparent;
@@ -289,8 +288,8 @@ class SecuritySynopsisWidget(QFrame):
         """)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(7, 7, 7, 7)
-        lay.setSpacing(4)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(5)
 
         top = QHBoxLayout()
         top.setSpacing(4)
@@ -1404,14 +1403,19 @@ class HudCanvas(QWidget):
 
 class MetricBar(QWidget):
 
+    _ICONS = {
+        "CPU": "◈", "MEM": "▣", "MEMORY": "▣", "NET": "◎", "NETWORK": "◎",
+        "GPU": "▤", "TMP": "♨", "TEMP": "♨",
+    }
+
     def __init__(self, label: str, color: str = C.PRI, parent=None):
         super().__init__(parent)
         self._label = label
         self._color = color
         self._value = 0.0
         self._text  = "--"
-        self.setFixedHeight(52)
-        self.setMinimumWidth(120)
+        self.setFixedHeight(70)
+        self.setMinimumWidth(150)
 
     def set_value(self, pct: float, text: str):
         self._value = max(0.0, min(100.0, pct))
@@ -1421,14 +1425,24 @@ class MetricBar(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         W, H = self.width(), self.height()
 
         bg = QLinearGradient(0, 0, W, H)
-        bg.setColorAt(0.0, qcol("#081421", 245))
-        bg.setColorAt(1.0, qcol("#050b14", 245))
+        bg.setColorAt(0.00, qcol("#092035", 245))
+        bg.setColorAt(0.55, qcol("#061421", 245))
+        bg.setColorAt(1.00, qcol("#030814", 250))
         p.setBrush(QBrush(bg))
-        p.setPen(QPen(qcol(C.BORDER_A, 190), 1))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 12, 12)
+        p.setPen(QPen(qcol(C.BORDER_A, 205), 1.15))
+        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 15, 15)
+
+        # top glass shine
+        shine = QLinearGradient(0, 0, 0, H)
+        shine.setColorAt(0.00, qcol("#ffffff", 18))
+        shine.setColorAt(0.42, qcol("#ffffff", 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(shine))
+        p.drawRoundedRect(QRectF(2, 2, W - 4, H * 0.52), 14, 14)
 
         if self._value > 85:
             bar_col = qcol(C.RED)
@@ -1437,28 +1451,46 @@ class MetricBar(QWidget):
         else:
             bar_col = qcol(self._color)
 
-        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(12, 7, W - 24, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
+        icon = self._ICONS.get(self._label.upper(), "◆")
+        icon_rect = QRectF(14, 16, 34, 34)
+        icon_bg = QRadialGradient(icon_rect.center(), 28)
+        icon_bg.setColorAt(0.00, qcol(self._color, 70))
+        icon_bg.setColorAt(1.00, qcol(self._color, 10))
+        p.setPen(QPen(qcol(self._color, 185), 1))
+        p.setBrush(QBrush(icon_bg))
+        p.drawRoundedRect(icon_rect, 10, 10)
 
-        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Black))
+        p.setFont(QFont("Segoe UI", 13, QFont.Weight.Black))
+        p.setPen(QPen(qcol(self._color, 230), 1))
+        p.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, icon)
+
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        p.setPen(QPen(qcol(C.TEXT_MED), 1))
+        p.drawText(QRectF(58, 13, W - 136, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label.upper())
+
+        p.setFont(QFont("Segoe UI", 15, QFont.Weight.Black))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(12, 7, W - 24, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
+        p.drawText(QRectF(W - 98, 12, 84, 24), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
-        bar_h = 6
-        bar_x = 12
-        bar_y = H - 17
-        bar_w = W - 24
+        bar_x = 58
+        bar_y = 44
+        bar_w = W - 76
+        bar_h = 7
         fill_w = int(bar_w * self._value / 100)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(qcol(C.BAR_BG)))
-        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 3, 3)
+        p.setBrush(QBrush(qcol(C.BAR_BG, 240)))
+        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 4, 4)
         if fill_w > 0:
             grad = QLinearGradient(bar_x, bar_y, bar_x + max(1, fill_w), bar_y)
             grad.setColorAt(0, qcol(self._color, 120))
-            grad.setColorAt(1, bar_col)
+            grad.setColorAt(0.68, bar_col)
+            grad.setColorAt(1, qcol(C.WHITE, 210))
             p.setBrush(QBrush(grad))
-            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 3, 3)
+            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 4, 4)
+
+        # subtle right pulse marker
+        p.setBrush(QBrush(qcol(self._color, 165)))
+        p.drawEllipse(QPointF(W - 17, H - 16), 2.4, 2.4)
 
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
@@ -1466,25 +1498,33 @@ class LogWidget(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Cascadia Mono", 8))
         self.setStyleSheet(f"""
             QTextEdit {{
-                background: {C.PANEL};
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                    stop:0 rgba(4, 15, 27, 0.98),
+                    stop:0.55 rgba(6, 20, 33, 0.98),
+                    stop:1 rgba(2, 7, 17, 0.98));
                 color: {C.TEXT};
-                border: 1px solid {C.BORDER};
-                border-radius: 12px;
-                padding: 6px;
-                selection-background-color: {C.PRI_GHO};
+                border: 1px solid rgba(40, 233, 255, 0.28);
+                border-radius: 16px;
+                padding: 9px;
+                selection-background-color: rgba(40, 233, 255, 0.20);
             }}
             QScrollBar:vertical {{
-                background: {C.BG};
+                background: rgba(2, 7, 17, 0.88);
                 width: 8px;
                 border: none;
+                margin: 10px 2px 10px 0;
+                border-radius: 4px;
             }}
             QScrollBar::handle:vertical {{
-                background: {C.BORDER_B};
-                border-radius: 12px;
-                min-height: 20px;
+                background: rgba(40, 233, 255, 0.74);
+                border-radius: 4px;
+                min-height: 24px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
             }}
         """)
         self._queue: list[str] = []
@@ -1492,6 +1532,7 @@ class LogWidget(QTextEdit):
         self._text    = ""
         self._pos     = 0
         self._tag     = "sys"
+        self._line_prefix = ""
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._sig.connect(self._enqueue)
@@ -1513,11 +1554,18 @@ class LogWidget(QTextEdit):
         self._pos    = 0
         tl = self._text.lower()
         if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith("jarvis:"): self._tag = "ai"
+        elif tl.startswith("jarvis:") or tl.startswith("friday:"): self._tag = "ai"
         elif tl.startswith("file:"):   self._tag = "file"
-        elif "err" in tl:              self._tag = "err"
+        elif "err" in tl or "error" in tl: self._tag = "err"
         else:                          self._tag = "sys"
-        self._tmr.start(6)
+        self._line_prefix = time.strftime("%H:%M:%S") + "  "
+        cur = self.textCursor()
+        cur.movePosition(cur.MoveOperation.End)
+        fmt = cur.charFormat()
+        fmt.setForeground(QBrush(qcol(C.TEXT_DIM, 210)))
+        cur.insertText(self._line_prefix, fmt)
+        self.setTextCursor(cur)
+        self._tmr.start(4)
 
     def _step(self):
         if self._pos < len(self._text):
@@ -1586,7 +1634,7 @@ class FileDropZone(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(100)
+        self.setFixedHeight(112)
         self._current_file: str | None = None
         self._hovering  = False
         self._drag_over = False
@@ -1666,100 +1714,103 @@ class _DropCanvas(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         z    = self._z
         W, H = self.width(), self.height()
-        pad  = 6
+        pad  = 7
         rect = QRectF(pad, pad, W - pad * 2, H - pad * 2)
 
-        bg_col = qcol("#001a24" if z._drag_over else ("#001218" if z._hovering else C.PANEL))
-        p.setBrush(QBrush(bg_col)); p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(rect, 6, 6)
+        bg = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        if z._drag_over:
+            bg.setColorAt(0.0, qcol("#073047", 240))
+            bg.setColorAt(1.0, qcol("#03101c", 250))
+        elif z._hovering:
+            bg.setColorAt(0.0, qcol("#062638", 230))
+            bg.setColorAt(1.0, qcol("#04101b", 245))
+        else:
+            bg.setColorAt(0.0, qcol("#071826", 235))
+            bg.setColorAt(1.0, qcol("#030a14", 245))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(rect, 14, 14)
 
-        if z._current_file:   border_col = qcol(C.GREEN, 200)
+        if z._current_file:   border_col = qcol(C.GREEN, 210)
         elif z._drag_over:    border_col = qcol(C.PRI, 230)
-        elif z._hovering:     border_col = qcol(C.BORDER_B, 200)
-        else:                 border_col = qcol(C.BORDER, 160)
+        elif z._hovering:     border_col = qcol(C.BORDER_B, 205)
+        else:                 border_col = qcol(C.BORDER_A, 180)
 
-        pen = QPen(border_col, 1.5, Qt.PenStyle.DashLine)
+        pen = QPen(border_col, 1.4, Qt.PenStyle.DashLine)
         pen.setDashOffset(z._dash_offset)
-        p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, 6, 6)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, 14, 14)
+
+        # center soft glow
+        glow = QRadialGradient(rect.center(), min(W, H) * 0.82)
+        glow.setColorAt(0.0, qcol(C.PRI, 20 if not z._current_file else 34))
+        glow.setColorAt(1.0, qcol(C.PRI, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(glow))
+        p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 14, 14)
 
         if z._current_file:   self._paint_file(p, W, H)
         elif z._drag_over:    self._paint_drag_over(p, W, H)
         else:                 self._paint_idle(p, W, H, z._hovering)
 
     def _paint_idle(self, p, W, H, hover):
-        cx, cy = W / 2, H / 2
-        col = qcol(C.PRI_DIM if not hover else C.PRI)
-        p.setPen(QPen(col, 2)); p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawLine(QPointF(cx, cy - 14), QPointF(cx, cy + 4))
-        p.drawLine(QPointF(cx - 8, cy - 6), QPointF(cx, cy - 14))
-        p.drawLine(QPointF(cx + 8, cy - 6), QPointF(cx, cy - 14))
-        p.drawLine(QPointF(cx - 14, cy + 4), QPointF(cx + 14, cy + 4))
-        p.setFont(QFont("Courier New", 8))
-        p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
-        p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
-                   "Drop file here  or  Click to Analyze")
-        p.setFont(QFont("Courier New", 7))
-        p.setPen(QPen(qcol("#1a4a5a"), 1))
-        p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
+        cx, cy = W / 2, H / 2 - 6
+        col = qcol(C.PRI if hover else C.PRI_DIM, 230 if hover else 175)
+        p.setPen(QPen(col, 2.2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        # cloud/upload icon
+        p.drawArc(QRectF(cx - 25, cy - 4, 25, 22), 35 * 16, 235 * 16)
+        p.drawArc(QRectF(cx - 5, cy - 16, 31, 31), 25 * 16, 250 * 16)
+        p.drawLine(QPointF(cx - 22, cy + 12), QPointF(cx + 27, cy + 12))
+        p.drawLine(QPointF(cx, cy + 8), QPointF(cx, cy - 12))
+        p.drawLine(QPointF(cx - 8, cy - 4), QPointF(cx, cy - 12))
+        p.drawLine(QPointF(cx + 8, cy - 4), QPointF(cx, cy - 12))
+
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(C.TEXT if hover else C.TEXT_MED), 1))
+        p.drawText(QRectF(0, cy + 22, W, 18), Qt.AlignmentFlag.AlignCenter,
+                   "Drop file here or click to analyze")
+        p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(C.TEXT_DIM, 170), 1))
+        p.drawText(QRectF(0, cy + 43, W, 16), Qt.AlignmentFlag.AlignCenter,
                    "Images · PDF · Office · Code · Data · Media")
 
     def _paint_drag_over(self, p, W, H):
-        cx, cy = W / 2, H / 2
-        p.setFont(QFont("Courier New", 20))
+        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Black))
         p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to analyze")
+        p.drawText(QRectF(0, 36, W, 26), Qt.AlignmentFlag.AlignCenter, "RELEASE TO LOAD FILE")
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(C.TEXT_MED), 1))
+        p.drawText(QRectF(0, 62, W, 20), Qt.AlignmentFlag.AlignCenter, "FRIDAY will prepare analysis context")
 
     def _paint_file(self, p, W, H):
         path = Path(self._z._current_file)
         cat  = _file_category(path)
-        icon, icon_col = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
-        size_str = _fmt_size(path.stat().st_size)
-        ext_str  = path.suffix.upper().lstrip(".") or "FILE"
+        icon, col = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
+        cx, cy = W / 2, H / 2
 
-        block_x, block_w = 10, 60
-        p.setFont(QFont("Segoe UI Emoji", 22) if _OS == "Windows" else QFont("Arial", 22))
-        p.setPen(QPen(qcol(icon_col), 1))
-        p.drawText(QRectF(block_x, 0, block_w, H), Qt.AlignmentFlag.AlignCenter, icon)
+        p.setFont(QFont("Segoe UI Emoji", 18, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(col, 235), 1))
+        p.drawText(QRectF(0, cy - 34, W, 30), Qt.AlignmentFlag.AlignCenter, icon)
 
-        tx = block_x + block_w + 6
-        tw = W - tx - 38
-
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
         p.setPen(QPen(qcol(C.WHITE), 1))
-        name = path.name if len(path.name) <= 34 else path.name[:31] + "..."
-        p.drawText(QRectF(tx, H * 0.18, tw, 16),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+        name = path.name
+        if len(name) > 34:
+            name = name[:16] + "…" + name[-15:]
+        p.drawText(QRectF(14, cy - 3, W - 28, 18), Qt.AlignmentFlag.AlignCenter, name)
 
-        p.setFont(QFont("Courier New", 7))
-        p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(tx, H * 0.18 + 18, tw, 14),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   f"{ext_str}  ·  {size_str}")
-
-        p.setFont(QFont("Courier New", 6))
-        p.setPen(QPen(qcol("#1e5c6a"), 1))
-        par = str(path.parent)
-        if len(par) > 42: par = "…" + par[-41:]
-        p.drawText(QRectF(tx, H * 0.18 + 34, tw, 12),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, par)
-
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
-        p.setPen(QPen(qcol(C.RED, 180), 1))
-        p.drawText(QRectF(W - 34, 0, 28, H), Qt.AlignmentFlag.AlignCenter, "✕")
-
-    def mousePressEvent(self, e):
-        z = self._z
-        if z._current_file and e.pos().x() > self.width() - 34:
-            z.clear_file()
-        else:
-            z.mousePressEvent(e)
-
+        try:
+            meta = f"{cat.upper()} · {_fmt_size(path.stat().st_size)} · READY"
+        except Exception:
+            meta = f"{cat.upper()} · READY"
+        p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(C.GREEN, 220), 1))
+        p.drawText(QRectF(0, cy + 18, W, 18), Qt.AlignmentFlag.AlignCenter, meta)
 
 class SetupOverlay(QWidget):
     done = pyqtSignal(str, str)
@@ -1915,17 +1966,23 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
 
         central = QWidget()
-        central.setStyleSheet(f"background: {C.BG};")
+        central.setObjectName("FridayRoot")
+        central.setStyleSheet("""
+            QWidget#FridayRoot {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                    stop:0 #01050c, stop:0.45 #03111f, stop:1 #01050c);
+            }
+        """)
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(10, 10, 10, 0)
+        root.setSpacing(10)
         root.addWidget(self._build_header())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setSpacing(12)
 
         self._left_panel = self._build_left_panel()
         body.addWidget(self._left_panel, stretch=0)
@@ -2036,59 +2093,101 @@ class MainWindow(QMainWindow):
 
 
     def _build_header(self) -> QWidget:
-        w = QWidget()
-        w.setFixedHeight(78)
+        w = QFrame()
+        w.setFixedHeight(86)
+        w.setObjectName("FridayHeader")
         w.setStyleSheet(f"""
-            QWidget {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #040912, stop:0.5 #07192a, stop:1 #040912);
-                border-bottom: 1px solid {C.BORDER_B};
+            QFrame#FridayHeader {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 rgba(4, 15, 27, 0.98),
+                    stop:0.5 rgba(7, 28, 44, 0.96),
+                    stop:1 rgba(4, 15, 27, 0.98));
+                border: 1px solid rgba(40, 233, 255, 0.30);
+                border-radius: 16px;
             }}
+            QLabel {{ background: transparent; border: none; }}
         """)
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(22, 0, 22, 0)
-        lay.setSpacing(16)
+        lay.setContentsMargins(22, 10, 22, 10)
+        lay.setSpacing(18)
 
-        left = QVBoxLayout(); left.setSpacing(3)
+        left_wrap = QHBoxLayout()
+        left_wrap.setSpacing(12)
+
+        mark = QLabel("◇")
+        mark.setFixedSize(42, 42)
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark.setFont(QFont("Segoe UI", 22, QFont.Weight.Black))
+        mark.setStyleSheet(f"""
+            QLabel {{
+                color: {C.PRI};
+                background: qradialgradient(cx:0.5, cy:0.5, radius:0.75,
+                    stop:0 rgba(40,233,255,0.26), stop:1 rgba(40,233,255,0.04));
+                border: 1px solid rgba(40,233,255,0.40);
+                border-radius: 12px;
+            }}
+        """)
+        left_wrap.addWidget(mark)
+
+        left = QVBoxLayout(); left.setSpacing(2)
         brand = QLabel("MEDPOV")
-        brand.setFont(QFont("Segoe UI", 16, QFont.Weight.Black))
-        brand.setStyleSheet(f"color: {C.WHITE}; background: transparent; border: none; letter-spacing: 2px;")
+        brand.setFont(QFont("Segoe UI", 21, QFont.Weight.Black))
+        brand.setStyleSheet(f"color: {C.WHITE}; letter-spacing: 1.2px;")
         left.addWidget(brand)
         build = QLabel("PRIVATE AI COMMAND SYSTEM")
-        build.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        build.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        build.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        build.setStyleSheet(f"color: {C.PRI}; letter-spacing: 3px;")
         left.addWidget(build)
-        lay.addLayout(left)
-
-        lay.addStretch()
+        left_wrap.addLayout(left)
+        lay.addLayout(left_wrap, stretch=1)
 
         mid = QVBoxLayout(); mid.setSpacing(0)
         title = QLabel("F.R.I.D.A.Y")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setFont(QFont("Segoe UI", 25, QFont.Weight.Black))
-        title.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none; letter-spacing: 7px;")
+        title.setFont(QFont("Segoe UI", 28, QFont.Weight.Black))
+        title.setStyleSheet(f"color: {C.PRI}; letter-spacing: 9px;")
         mid.addWidget(title)
-        sub = QLabel("MEDPOV Holographic Personal Intelligence Interface")
+        sub = QLabel("MEDPOV HOLOGRAPHIC PERSONAL INTELLIGENCE INTERFACE")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        sub.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
+        sub.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        sub.setStyleSheet(f"color: {C.TEXT_MED}; letter-spacing: 3px;")
         mid.addWidget(sub)
-        lay.addLayout(mid)
+        lay.addLayout(mid, stretch=2)
 
-        lay.addStretch()
+        right_box = QFrame()
+        right_box.setObjectName("HeaderStatusBox")
+        right_box.setFixedWidth(210)
+        right_box.setStyleSheet(f"""
+            QFrame#HeaderStatusBox {{
+                background: rgba(2, 12, 22, 0.35);
+                border: 1px solid rgba(40, 233, 255, 0.16);
+                border-radius: 14px;
+            }}
+        """)
+        rb = QHBoxLayout(right_box)
+        rb.setContentsMargins(12, 8, 12, 8)
+        rb.setSpacing(12)
 
-        right_col = QVBoxLayout(); right_col.setSpacing(2)
+        right_col = QVBoxLayout(); right_col.setSpacing(1)
         self._clock_lbl = QLabel("00:00:00")
-        self._clock_lbl.setFont(QFont("Segoe UI", 17, QFont.Weight.Black))
-        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
+        self._clock_lbl.setFont(QFont("Segoe UI", 18, QFont.Weight.Black))
+        self._clock_lbl.setStyleSheet(f"color: {C.PRI};")
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._clock_lbl)
         self._date_lbl = QLabel("")
         self._date_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM};")
         self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._date_lbl)
-        lay.addLayout(right_col)
+        rb.addLayout(right_col)
+
+        online = QLabel("SYSTEM\nONLINE")
+        online.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        online.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+        online.setStyleSheet(f"color: {C.GREEN}; letter-spacing: 1px;")
+        rb.addWidget(online)
+
+        lay.addWidget(right_box, stretch=1)
         return w
 
     def _tick_clock(self):
@@ -2096,76 +2195,105 @@ class MainWindow(QMainWindow):
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
 
     def _build_left_panel(self) -> QWidget:
-        w = QWidget()
+        w = QFrame()
         w.setFixedWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
+        w.setObjectName("LeftCommandPanel")
+        w.setStyleSheet(f"""
+            QFrame#LeftCommandPanel {{
+                background: rgba(3, 11, 21, 0.70);
+                border: 1px solid rgba(40, 233, 255, 0.22);
+                border-radius: 16px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+        """)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 10, 8, 10)
-        lay.setSpacing(6)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
 
-        hdr = QLabel("◈ MEDPOV SYSTEM")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
-                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
-        lay.addWidget(hdr)
-        lay.addSpacing(2)
+        def section(title: str, icon: str = "✦"):
+            box = QFrame()
+            box.setObjectName("FridaySectionBox")
+            box.setStyleSheet(f"""
+                QFrame#FridaySectionBox {{
+                    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                        stop:0 rgba(7, 24, 38, 0.90), stop:1 rgba(3, 10, 20, 0.96));
+                    border: 1px solid rgba(40, 233, 255, 0.24);
+                    border-radius: 16px;
+                }}
+            """)
+            outer = QVBoxLayout(box)
+            outer.setContentsMargins(12, 10, 12, 12)
+            outer.setSpacing(9)
+            head = QLabel(f"{icon}  {title}")
+            head.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+            head.setStyleSheet(f"color: {C.WHITE}; letter-spacing: 0.8px;")
+            outer.addWidget(head)
+            return box, outer
 
+        status_box, status_lay = section("SYSTEM STATUS", "⌁")
         self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
-        self._bar_net = MetricBar("NET", C.GREEN)
+        self._bar_mem = MetricBar("MEMORY", C.ACC2)
+        self._bar_net = MetricBar("NETWORK", C.GREEN)
         self._bar_gpu = MetricBar("GPU", C.ACC)
-        self._bar_tmp = MetricBar("TMP", "#ff6688")
+        self._bar_tmp = MetricBar("TEMP", "#ff6688")
+        for bar in [self._bar_cpu, self._bar_mem, self._bar_net, self._bar_gpu, self._bar_tmp]:
+            status_lay.addWidget(bar)
+        lay.addWidget(status_box)
 
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
-                    self._bar_gpu, self._bar_tmp]:
-            lay.addWidget(bar)
+        info_box, info_lay = section("SYSTEM INFO", "◈")
+        def info_row(icon: str, label: QLabel):
+            row = QHBoxLayout(); row.setSpacing(8)
+            ic = QLabel(icon); ic.setFixedWidth(22); ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ic.setFont(QFont("Segoe UI", 11, QFont.Weight.Black))
+            ic.setStyleSheet(f"color: {C.PRI};")
+            label.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            label.setStyleSheet(f"color: {C.TEXT_MED};")
+            row.addWidget(ic); row.addWidget(label, stretch=1)
+            return row
 
-        lay.addSpacing(4)
-
-        info_panel = QWidget()
-        info_panel.setStyleSheet(
-            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 12px;"
-        )
-        ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
-        ip_lay.setSpacing(3)
-
-        self._uptime_lbl = QLabel("UP  --:--")
-        self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
-        ip_lay.addWidget(self._uptime_lbl)
-
-        self._proc_lbl = QLabel("PROC  --")
-        self._proc_lbl.setFont(QFont("Courier New", 8))
-        self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
-        ip_lay.addWidget(self._proc_lbl)
-
+        self._uptime_lbl = QLabel("UP TIME        --:--")
+        self._proc_lbl = QLabel("PROCESSES      --")
         os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
-        os_lbl = QLabel(f"OS  {os_name}")
-        os_lbl.setFont(QFont("Courier New", 8))
-        os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
-        ip_lay.addWidget(os_lbl)
+        os_lbl = QLabel(f"OS             {os_name}")
+        for icon, lbl in [("◷", self._uptime_lbl), ("▤", self._proc_lbl), ("▦", os_lbl)]:
+            info_lay.addLayout(info_row(icon, lbl))
+        lay.addWidget(info_box)
 
-        lay.addWidget(info_panel)
+        sc_box, sc_lay = section("SECURITY SYNOPSIS", "✧")
+        self._sc_synopsis = SecuritySynopsisWidget(self)
+        sc_lay.addWidget(self._sc_synopsis)
+        lay.addWidget(sc_box)
+
+        activity_box, activity_lay = section("SYSTEM ACTIVITY", "⌁")
+        spark_top = QHBoxLayout()
+        spark_title = QLabel("Live telemetry")
+        spark_title.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        spark_title.setStyleSheet(f"color: {C.TEXT_DIM};")
+        spark_peak = QLabel("Peak 72%")
+        spark_peak.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        spark_peak.setStyleSheet(f"color: {C.PRI};")
+        spark_top.addWidget(spark_title); spark_top.addStretch(); spark_top.addWidget(spark_peak)
+        activity_lay.addLayout(spark_top)
+        spark = QLabel("▁▂▂▃▄▆▇▆▅▃▂▄▆▇▆▄▃▃▄▅▆▇")
+        spark.setFont(QFont("Segoe UI", 13, QFont.Weight.Black))
+        spark.setStyleSheet(f"color: {C.PRI}; letter-spacing: 1px;")
+        spark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        activity_lay.addWidget(spark)
+        lay.addWidget(activity_box)
+
         lay.addStretch()
 
-        self._sc_synopsis = SecuritySynopsisWidget(self)
-        lay.addWidget(self._sc_synopsis)
-        lay.addSpacing(4)
-
-        for txt, col in [
-            ("FRIDAY\nONLINE",     C.GREEN),
-            ("MEDPOV\nSECURE",      C.PRI),
-            ("AI CORE\nREADY",     C.TEXT_DIM),
-        ]:
+        pills = QHBoxLayout(); pills.setSpacing(8)
+        for txt, col in [("●  FRIDAY ONLINE", C.GREEN), ("◇  MEDPOV SECURE", C.PRI), ("◎  AI CORE READY", C.TEXT_MED)]:
             lbl = QLabel(txt)
-            lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            lbl.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
-                f"color: {col}; background: {C.PANEL2};"
-                f"border: 1px solid {C.BORDER_A}; border-radius: 10px; padding: 4px;"
+                f"color: {col}; background: rgba(7,24,38,0.82); "
+                f"border: 1px solid rgba(40,233,255,0.26); border-radius: 10px; padding: 7px 6px;"
             )
-            lay.addWidget(lbl)
+            pills.addWidget(lbl)
+        lay.addLayout(pills)
 
         return w
 
@@ -2179,50 +2307,45 @@ class MainWindow(QMainWindow):
 
         panel = QFrame()
         panel.setObjectName("FridaySettingsQuickPanel")
-        panel.setStyleSheet("""
-            QFrame#FridaySettingsQuickPanel {
+        panel.setStyleSheet(f"""
+            QFrame#FridaySettingsQuickPanel {{
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                    stop:0 rgba(255, 139, 38, 0.16),
-                    stop:0.52 rgba(15, 23, 42, 0.72),
-                    stop:1 rgba(2, 6, 23, 0.86));
-                border: 1px solid rgba(255, 160, 64, 0.38);
-                border-radius: 18px;
-                padding: 10px;
-            }
-            QFrame#FridaySettingsQuickPanel QLabel {
-                color: rgba(255, 244, 226, 0.95);
-                background: transparent;
-            }
-            QFrame#FridaySettingsQuickPanel QLabel#FridaySettingsTitle {
-                color: #ffb45f;
+                    stop:0 rgba(255, 159, 28, 0.18),
+                    stop:0.48 rgba(7, 24, 38, 0.86),
+                    stop:1 rgba(3, 10, 20, 0.96));
+                border: 1px solid rgba(255, 209, 102, 0.36);
+                border-radius: 16px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+            QLabel#FridaySettingsTitle {{
+                color: {C.ACC2};
                 font-size: 12px;
-                font-weight: 800;
+                font-weight: 900;
                 letter-spacing: 1.2px;
-            }
-            QFrame#FridaySettingsQuickPanel QLabel#FridaySettingsDesc {
-                color: rgba(226, 232, 240, 0.72);
+            }}
+            QLabel#FridaySettingsDesc {{
+                color: rgba(226, 245, 255, 0.72);
                 font-size: 10px;
-                line-height: 1.35em;
-            }
-            QFrame#FridaySettingsQuickPanel QPushButton {
+            }}
+            QPushButton {{
                 color: #fff7ed;
-                background: rgba(255, 139, 38, 0.22);
-                border: 1px solid rgba(255, 177, 94, 0.45);
-                border-radius: 12px;
-                padding: 9px 10px;
-                font-weight: 800;
-            }
-            QFrame#FridaySettingsQuickPanel QPushButton:hover {
-                background: rgba(255, 139, 38, 0.36);
-                border-color: rgba(255, 202, 133, 0.72);
-            }
+                background: rgba(255, 159, 28, 0.18);
+                border: 1px solid rgba(255, 209, 102, 0.38);
+                border-radius: 11px;
+                padding: 8px 10px;
+                font-weight: 900;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 159, 28, 0.30);
+                border-color: rgba(255, 209, 102, 0.70);
+            }}
         """)
 
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(8)
 
-        title = QLabel("⚙ FRIDAY SETTINGS")
+        title = QLabel("⚙  FRIDAY SETTINGS")
         title.setObjectName("FridaySettingsTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
@@ -2230,7 +2353,7 @@ class MainWindow(QMainWindow):
         desc.setObjectName("FridaySettingsDesc")
         desc.setWordWrap(True)
 
-        btn = QPushButton("Ayarları Aç")
+        btn = QPushButton("Ayarları Aç     ›")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(self._open_friday_settings_dialog)
 
@@ -2283,85 +2406,98 @@ class MainWindow(QMainWindow):
             )
 
     def _build_right_panel(self) -> QWidget:
-        w = QWidget()
+        w = QFrame()
         w.setFixedWidth(_RIGHT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-left: 1px solid {C.BORDER};")
+        w.setObjectName("RightCommandPanel")
+        w.setStyleSheet(f"""
+            QFrame#RightCommandPanel {{
+                background: rgba(3, 11, 21, 0.70);
+                border: 1px solid rgba(40, 233, 255, 0.22);
+                border-radius: 16px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+        """)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
 
-        def _sec(txt):
-            l = QLabel(f"▸ {txt}")
-            l.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-            return l
+        def _sec(txt, icon="▸"):
+            row = QHBoxLayout(); row.setSpacing(8)
+            ic = QLabel(icon)
+            ic.setFixedWidth(18)
+            ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ic.setFont(QFont("Segoe UI", 10, QFont.Weight.Black))
+            ic.setStyleSheet(f"color: {C.PRI};")
+            title = QLabel(txt)
+            title.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+            title.setStyleSheet(f"color: {C.WHITE}; letter-spacing: 0.8px;")
+            row.addWidget(ic); row.addWidget(title); row.addStretch()
+            wrap = QWidget(); wrap.setLayout(row); wrap.setStyleSheet("background: transparent; border: none;")
+            return wrap
 
-        lay.addWidget(_sec("FRIDAY COMMAND LOG"))
+        lay.addWidget(_sec("FRIDAY COMMAND LOG", "▣"))
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
 
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
-        lay.addWidget(sep)
-
-        lay.addWidget(_sec("INTELLIGENT FILE INPUT"))
+        lay.addWidget(_sec("INTELLIGENT FILE INPUT", "⌁"))
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
         self._file_hint = QLabel("No file loaded — drop or click to analyze with FRIDAY")
-        self._file_hint.setFont(QFont("Courier New", 7))
-        self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._file_hint.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._file_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none; padding-left: 4px;")
         self._file_hint.setWordWrap(True)
         lay.addWidget(self._file_hint)
 
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
-        lay.addWidget(sep2)
-
-        lay.addWidget(_sec("SECURITY CENTER"))
+        lay.addWidget(_sec("SECURITY CENTER QUICK LINKS", "✦"))
         lay.addWidget(self._build_security_center_quick_panel())
 
-        lay.addWidget(_sec("AYARLAR"))
+        lay.addWidget(_sec("FRIDAY SETTINGS", "⚙"))
         lay.addWidget(self._build_friday_settings_panel())
 
-        lay.addWidget(_sec("DIRECT COMMAND"))
+        lay.addWidget(_sec("DIRECT COMMAND", "⌲"))
         lay.addLayout(self._build_input_row())
 
-        self._standby_btn = QPushButton("⏸  STANDBY MODE")
-        self._standby_btn.setFixedHeight(30)
-        self._standby_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        buttons = QHBoxLayout(); buttons.setSpacing(8)
+        self._standby_btn = QPushButton("⏻  STANDBY MODE")
+        self._standby_btn.setFixedHeight(34)
+        self._standby_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
         self._standby_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._standby_btn.clicked.connect(self._toggle_standby)
         self._style_standby_btn()
-        lay.addWidget(self._standby_btn)
+        buttons.addWidget(self._standby_btn)
 
         self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
-        self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._mute_btn.setFixedHeight(34)
+        self._mute_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._mute_btn.clicked.connect(self._toggle_mute)
         self._style_mute_btn()
-        lay.addWidget(self._mute_btn)
+        buttons.addWidget(self._mute_btn)
+        lay.addLayout(buttons)
 
         fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
-        fs_btn.setFixedHeight(26)
-        fs_btn.setFont(QFont("Courier New", 7))
+        fs_btn.setFixedHeight(30)
+        fs_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         fs_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER}; border-radius: 10px;
+                background: rgba(7, 24, 38, 0.82);
+                color: {C.TEXT_MED};
+                border: 1px solid rgba(40,233,255,0.24);
+                border-radius: 11px;
             }}
             QPushButton:hover {{
-                color: {C.PRI}; border: 1px solid {C.BORDER_B};
+                color: {C.PRI};
+                border: 1px solid rgba(40,233,255,0.56);
+                background: rgba(8, 34, 56, 0.92);
             }}
         """)
         fs_btn.clicked.connect(self._toggle_fullscreen)
         lay.addWidget(fs_btn)
 
         return w
-
 
     def _run_security_center_quick(self, command: str, send_now: bool = True):
         try:
@@ -2374,72 +2510,149 @@ class MainWindow(QMainWindow):
             except Exception: pass
     def _build_security_center_quick_panel(self) -> QWidget:
         box = QFrame()
+        box.setObjectName("SecurityQuickPanel")
         box.setStyleSheet(f"""
-            QFrame {{ background: rgba(5, 22, 36, 0.78); border: 1px solid {C.BORDER}; border-radius: 12px; }}
-            QPushButton {{ background: #061626; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 9px; padding: 5px 7px; text-align: left; }}
-            QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; background: #09223a; }}
+            QFrame#SecurityQuickPanel {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                    stop:0 rgba(7, 24, 38, 0.92), stop:1 rgba(3, 10, 20, 0.96));
+                border: 1px solid rgba(40, 233, 255, 0.24);
+                border-radius: 16px;
+            }}
             QLabel {{ background: transparent; border: none; }}
+            QPushButton {{
+                background: rgba(6, 22, 38, 0.88);
+                color: {C.TEXT_MED};
+                border: 1px solid rgba(40, 233, 255, 0.24);
+                border-radius: 10px;
+                padding: 6px 8px;
+                text-align: left;
+                font-weight: 800;
+            }}
+            QPushButton:hover {{
+                color: {C.WHITE};
+                border: 1px solid rgba(40, 233, 255, 0.60);
+                background: rgba(9, 38, 61, 0.96);
+            }}
         """)
-        outer = QVBoxLayout(box); outer.setContentsMargins(7,7,7,7); outer.setSpacing(5)
-        head = QLabel("SECURITY CENTER QUICK LINK"); head.setFont(QFont("Courier New", 7, QFont.Weight.Bold)); head.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;"); outer.addWidget(head)
-        hint = QLabel("Live MEDPOV threat intelligence"); hint.setFont(QFont("Courier New", 7)); hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;"); outer.addWidget(hint)
-        commands = [("● Overview","/sc overview",True),("▲ Son Tehditler","/sc threats",True),("◆ Health","/sc health",True),("◉ Live","/sc live",True),("IP Profil","/sc ip 65.55.210.207",False),("IP Analiz","/sc analyze 65.55.210.207",False),("IP Block","/sc block 1.2.3.4",False),("Resolve Event","/sc resolve-event 124",False)]
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(12, 11, 12, 12)
+        outer.setSpacing(7)
+
+        top = QHBoxLayout(); top.setSpacing(10)
+        text_col = QVBoxLayout(); text_col.setSpacing(1)
+        head = QLabel("SECURITY CENTER")
+        head.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        head.setStyleSheet(f"color: {C.ACC2}; letter-spacing: 1px;")
+        hint = QLabel("Live MEDPOV threat intelligence")
+        hint.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        hint.setStyleSheet(f"color: {C.TEXT_DIM};")
+        text_col.addWidget(head); text_col.addWidget(hint)
+        top.addLayout(text_col, stretch=1)
+        badge = QLabel("◈")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(46, 46)
+        badge.setFont(QFont("Segoe UI", 20, QFont.Weight.Black))
+        badge.setStyleSheet(f"color: {C.PRI}; border: 1px solid rgba(40,233,255,0.26); border-radius: 23px; background: rgba(40,233,255,0.06);")
+        top.addWidget(badge)
+        outer.addLayout(top)
+
+        commands = [
+            ("◉  Overview", "/sc overview", True),
+            ("▲  Son Tehditler", "/sc threats", True),
+            ("◇  Health", "/sc health", True),
+            ("◎  Live", "/sc live", True),
+            ("⌁  IP Profil", "/sc ip 65.55.210.207", False),
+            ("✦  IP Analiz", "/sc analyze 65.55.210.207", False),
+            ("⬢  IP Block", "/sc block 1.2.3.4", False),
+            ("✓  Resolve Event", "/sc resolve-event 124", False),
+        ]
         for idx in range(0, len(commands), 2):
-            row = QHBoxLayout(); row.setSpacing(5)
+            row = QHBoxLayout(); row.setSpacing(8)
             for label, command, send_now in commands[idx:idx+2]:
-                btn = QPushButton(label); btn.setFixedHeight(25); btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold)); btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn = QPushButton(label)
+                btn.setFixedHeight(29)
+                btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn.clicked.connect(lambda _=False, c=command, s=send_now: self._run_security_center_quick(c, s))
                 row.addWidget(btn)
             outer.addLayout(row)
         return box
 
     def _build_input_row(self) -> QHBoxLayout:
-        row = QHBoxLayout(); row.setSpacing(5)
+        row = QHBoxLayout(); row.setSpacing(8)
         self._input = QLineEdit()
         self._input.setPlaceholderText("Ask FRIDAY or type a command…")
-        self._input.setFont(QFont("Courier New", 9))
-        self._input.setFixedHeight(30)
+        self._input.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self._input.setFixedHeight(34)
         self._input.setStyleSheet(f"""
             QLineEdit {{
-                background: #000d14; color: {C.WHITE};
-                border: 1px solid {C.BORDER}; border-radius: 10px; padding: 3px 7px;
+                background: rgba(2, 12, 22, 0.92);
+                color: {C.WHITE};
+                border: 1px solid rgba(40,233,255,0.24);
+                border-radius: 12px;
+                padding: 4px 10px;
             }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            QLineEdit:focus {{
+                border: 1px solid rgba(40,233,255,0.72);
+                background: rgba(5, 22, 36, 0.96);
+            }}
         """)
         self._input.returnPressed.connect(self._send)
         row.addWidget(self._input)
 
-        send = QPushButton("▸")
-        send.setFixedSize(30, 30)
-        send.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        send = QPushButton("➤")
+        send.setFixedSize(34, 34)
+        send.setFont(QFont("Segoe UI", 12, QFont.Weight.Black))
         send.setCursor(Qt.CursorShape.PointingHandCursor)
         send.setStyleSheet(f"""
             QPushButton {{
-                background: {C.PANEL}; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 10px;
+                background: rgba(40,233,255,0.10);
+                color: {C.PRI};
+                border: 1px solid rgba(40,233,255,0.42);
+                border-radius: 12px;
             }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+            QPushButton:hover {{
+                background: rgba(40,233,255,0.22);
+                color: {C.WHITE};
+                border: 1px solid rgba(40,233,255,0.82);
+            }}
         """)
         send.clicked.connect(self._send)
         row.addWidget(send)
         return row
 
     def _build_footer(self) -> QWidget:
-        w = QWidget()
-        w.setFixedHeight(28)
-        w.setStyleSheet(f"background: {C.DARK}; border-top: 1px solid {C.BORDER};")
-        lay = QHBoxLayout(w); lay.setContentsMargins(18, 0, 18, 0)
+        w = QFrame()
+        w.setFixedHeight(34)
+        w.setObjectName("FridayFooter")
+        w.setStyleSheet(f"""
+            QFrame#FridayFooter {{
+                background: rgba(3, 11, 21, 0.72);
+                border: 1px solid rgba(40,233,255,0.20);
+                border-bottom: none;
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+        """)
+        lay = QHBoxLayout(w); lay.setContentsMargins(16, 0, 16, 0); lay.setSpacing(14)
 
-        def _fl(txt, color=C.TEXT_MED):
-            l = QLabel(txt); l.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            l.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+        def _fl(txt, color=C.TEXT_MED, weight=QFont.Weight.Bold):
+            l = QLabel(txt); l.setFont(QFont("Segoe UI", 8, weight))
+            l.setStyleSheet(f"color: {color};")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("MEDPOV Technologies  ·  FRIDAY AI COMMAND CENTER  ·  PRIVATE BUILD", C.WHITE))
+        lay.addWidget(_fl("© MEDPOV Technologies", C.TEXT_DIM))
+        lay.addWidget(_fl("|", C.BORDER_A))
+        lay.addWidget(_fl("FRIDAY AI COMMAND CENTER", C.WHITE, QFont.Weight.Black))
+        lay.addWidget(_fl("|", C.BORDER_A))
+        lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("© MEDPOV.COM", C.PRI_DIM))
+        lay.addWidget(_fl("v2.6.0", C.TEXT_DIM))
+        lay.addWidget(_fl("⌁", C.PRI))
+        lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
 
     def _on_file_selected(self, path: str):
@@ -2481,25 +2694,17 @@ class MainWindow(QMainWindow):
         self._style_standby_btn()
 
     def _style_standby_btn(self):
-        if not hasattr(self, "_standby_btn"):
-            return
         if self._standby:
-            self._standby_btn.setText("▶  START LISTENING")
+            self._standby_btn.setText("▶  WAKE FRIDAY")
             self._standby_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #0c1a0f; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 10px;
-                }}
-                QPushButton:hover {{ background: #102818; }}
+                QPushButton {{ background: rgba(255,159,28,0.18); color: {C.ACC2}; border: 1px solid rgba(255,209,102,0.54); border-radius: 12px; }}
+                QPushButton:hover {{ background: rgba(255,159,28,0.30); color: {C.WHITE}; }}
             """)
         else:
-            self._standby_btn.setText("⏸  STANDBY MODE")
+            self._standby_btn.setText("⏻  STANDBY MODE")
             self._standby_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #1c1005; color: {C.ACC2};
-                    border: 1px solid {C.ACC2}; border-radius: 10px;
-                }}
-                QPushButton:hover {{ background: #281606; }}
+                QPushButton {{ background: rgba(255,159,28,0.14); color: {C.ACC2}; border: 1px solid rgba(255,209,102,0.40); border-radius: 12px; }}
+                QPushButton:hover {{ background: rgba(255,159,28,0.25); color: {C.WHITE}; }}
             """)
 
     def _toggle_mute(self):
@@ -2520,19 +2725,14 @@ class MainWindow(QMainWindow):
         if self._muted:
             self._mute_btn.setText("🔇  MICROPHONE MUTED")
             self._mute_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #140006; color: {C.MUTED_C};
-                    border: 1px solid {C.MUTED_C}; border-radius: 10px;
-                }}
+                QPushButton {{ background: rgba(255,59,107,0.14); color: {C.RED}; border: 1px solid rgba(255,59,107,0.46); border-radius: 12px; }}
+                QPushButton:hover {{ background: rgba(255,59,107,0.24); color: {C.WHITE}; }}
             """)
         else:
             self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
             self._mute_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #00140a; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 10px;
-                }}
-                QPushButton:hover {{ background: #001f10; }}
+                QPushButton {{ background: rgba(34,242,168,0.12); color: {C.GREEN}; border: 1px solid rgba(34,242,168,0.42); border-radius: 12px; }}
+                QPushButton:hover {{ background: rgba(34,242,168,0.23); color: {C.WHITE}; }}
             """)
 
     def _send(self):
