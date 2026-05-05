@@ -9,6 +9,7 @@ from typing import Any, Dict
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -36,6 +37,8 @@ from .friday_settings_store import (
     normalize_ai_provider,
     normalize_fallback_provider,
     normalize_response_language,
+    normalize_ui_language,
+    get_friday_camera_enabled,
     api_url_from_base,
     load_settings,
     normalize_security_center_base_url,
@@ -73,14 +76,14 @@ class _SecurityCenterTestThread(QThread):
             except Exception:
                 data = {"ok": False, "message": raw[:500]}
             if data.get("ok"):
-                msg = "Security Center bağlantısı başarılı."
+                msg = "Security Center connection successful."
                 if data.get("version"):
                     msg += f"\nVersion: {data.get('version')}"
                 if data.get("access"):
                     msg += f"\nAccess: {data.get('access')}"
                 self.finished_ok.emit(msg)
             else:
-                self.finished_error.emit("Security Center cevap verdi ama yetki/bağlantı başarısız:\n" + json.dumps(data, ensure_ascii=False, indent=2))
+                self.finished_error.emit("Security Center responded, but authorization/connection failed:\n" + json.dumps(data, ensure_ascii=False, indent=2))
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             self.finished_error.emit(f"HTTP {exc.code}\n{raw[:1000]}")
@@ -101,7 +104,7 @@ class _OpenAITestThread(QThread):
     def run(self) -> None:
         try:
             if not self.api_key.strip():
-                raise RuntimeError("OpenAI API key boş.")
+                raise RuntimeError("OpenAI API key is empty.")
             payload = json.dumps({
                 "model": self.model,
                 "input": "Reply with only: OK"
@@ -124,7 +127,7 @@ class _OpenAITestThread(QThread):
             except Exception:
                 data = {"raw": raw[:500]}
             rid = data.get("id") or "response_received"
-            self.finished_ok.emit(f"OpenAI bağlantısı başarılı. Model: {self.model}\nResponse: {rid}")
+            self.finished_ok.emit(f"OpenAI connection successful. Model: {self.model}\nResponse: {rid}")
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             self.finished_error.emit(f"HTTP {exc.code}\n{raw[:1000]}")
@@ -135,7 +138,7 @@ class _OpenAITestThread(QThread):
 class FridaySettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("MEDPOV FRIDAY Ayarları")
+        self.setWindowTitle("MEDPOV FRIDAY Settings")
         self.setMinimumWidth(760)
         self._test_thread = None
         self._openai_test_thread = None
@@ -171,26 +174,27 @@ class FridaySettingsDialog(QDialog):
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         title.setStyleSheet("color:#ffb86b; padding: 4px 0 8px 0;")
         root.addWidget(title)
-        subtitle = QLabel("AI sağlayıcı, ses, cevap dili, Security Center, Gemini ve OpenAI ayarlarını buradan güncelleyebilirsin.")
+        subtitle = QLabel("Update AI provider, voice, response language, UI language, camera access, Security Center, Gemini and OpenAI settings here.")
         subtitle.setStyleSheet("color:#8fa1b8; padding-bottom:8px;")
         root.addWidget(subtitle)
         tabs = QTabWidget()
         tabs.addTab(self._provider_tab(), "AI Provider")
-        tabs.addTab(self._voice_tab(), "Ses")
+        tabs.addTab(self._voice_tab(), "Voice & Language")
         tabs.addTab(self._security_tab(), "Security Center")
         tabs.addTab(self._gemini_tab(), "Gemini")
         tabs.addTab(self._openai_tab(), "OpenAI")
+        tabs.addTab(self._privacy_tab(), "Privacy / Camera")
         root.addWidget(tabs)
         self.result_box = QTextEdit()
         self.result_box.setReadOnly(True)
         self.result_box.setFixedHeight(86)
-        self.result_box.setPlaceholderText("Test ve kayıt sonuçları burada görünecek.")
+        self.result_box.setPlaceholderText("Test and save results will appear here.")
         root.addWidget(self.result_box)
         actions = QHBoxLayout()
         actions.addStretch(1)
-        close_btn = QPushButton("Kapat")
+        close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        save_btn = QPushButton("Kaydet")
+        save_btn = QPushButton("Save")
         save_btn.setObjectName("saveBtn")
         save_btn.clicked.connect(self._save)
         actions.addWidget(close_btn)
@@ -203,20 +207,24 @@ class FridaySettingsDialog(QDialog):
         form = QFormLayout(w)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.ai_provider_combo = QComboBox()
-        self.ai_provider_combo.addItem("Gemini · mevcut canlı ses + tool orchestration", "gemini")
-        self.ai_provider_combo.addItem("OpenAI Realtime · bağımsız canlı ses + tool orchestration", "openai")
-        self.ai_provider_combo.addItem("Auto / Fallback · Gemini ana, OpenAI yedek", "auto")
+        self.ai_provider_combo.addItem("Gemini · current live voice + tool orchestration", "gemini")
+        self.ai_provider_combo.addItem("OpenAI Realtime · native live voice + tool orchestration", "openai")
+        self.ai_provider_combo.addItem("Auto / Fallback · Gemini primary, OpenAI backup", "auto")
         self.fallback_provider_combo = QComboBox()
         self.fallback_provider_combo.addItem("OpenAI", "openai")
         self.fallback_provider_combo.addItem("Gemini", "gemini")
+        self.ui_language_combo = QComboBox()
+        self.ui_language_combo.addItem("English interface", "en")
+        self.ui_language_combo.addItem("Türkçe arayüz", "tr")
         info = QLabel(
-            "Gemini modu eski davranışı korur. OpenAI modu yazılı komutları ve kamera/görüntü analizini OpenAI ile işler; "
-            "mikrofon transkripsiyon köprüsü için mevcut Live bağlantısı açık kalır. OpenAI cevapları artık Windows lokal TTS yerine OpenAI doğal ses modeliyle okunur. Auto modunda Gemini sorun yaşarsa vision/text tarafında OpenAI yedeği kullanılabilir."
+            "Gemini keeps the legacy behavior. OpenAI Realtime uses native live voice and tool orchestration. "
+            "Auto mode keeps Gemini primary and uses OpenAI as backup where available. Interface language changes apply after restart."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
         form.addRow("AI Provider", self.ai_provider_combo)
         form.addRow("Fallback", self.fallback_provider_combo)
+        form.addRow("Interface language", self.ui_language_combo)
         form.addRow("", info)
         return w
 
@@ -238,14 +246,14 @@ class FridaySettingsDialog(QDialog):
             self.voice_combo.addItem(item["label"], item["name"])
         self.voice_language = QLineEdit("tr-TR")
         self.response_language_combo = QComboBox()
-        self.response_language_combo.addItem("Türkçe cevap ver", "tr")
+        self.response_language_combo.addItem("Reply in Turkish", "tr")
         self.response_language_combo.addItem("Answer in English", "en")
-        hint = QLabel("Not: Ses ve cevap dili değişikliği Gemini Live oturumu yeniden açıldığında aktif olur. Friday'i kapatıp açmak en temiz sonuç verir.")
+        hint = QLabel("Note: Voice, response language and interface language changes are safest after restarting FRIDAY.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#8fa1b8;")
-        form.addRow("FRIDAY sesi", self.voice_combo)
-        form.addRow("Ses dil kodu", self.voice_language)
-        form.addRow("Cevap dili", self.response_language_combo)
+        form.addRow("FRIDAY voice", self.voice_combo)
+        form.addRow("Voice language code", self.voice_language)
+        form.addRow("Response language", self.response_language_combo)
         form.addRow("", hint)
         return w
 
@@ -260,9 +268,9 @@ class FridaySettingsDialog(QDialog):
         self.sc_timeout = QLineEdit("25")
         self.sc_endpoint_preview = QLineEdit()
         self.sc_endpoint_preview.setReadOnly(True)
-        test_btn = QPushButton("Bağlantıyı Test Et")
+        test_btn = QPushButton("Test Connection")
         test_btn.clicked.connect(self._test_security_center)
-        info = QLabel("Örnek base URL: https://medpov.com/main/security-center veya https://xwebsitesi.com/security-center")
+        info = QLabel("Example base URL: https://medpov.com/main/security-center or https://example.com/security-center")
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
         form.addRow("Base URL", self.sc_base_url)
@@ -280,7 +288,7 @@ class FridaySettingsDialog(QDialog):
         self.gemini_api_key = QLineEdit()
         self.gemini_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.gemini_model = QLineEdit(DEFAULT_GEMINI_MODEL)
-        info = QLabel("API key kaydedilince config/api_keys.json içine de yazılır. Yeni key/model için Friday'i yeniden başlatman önerilir.")
+        info = QLabel("When saved, the API key is mirrored to config/api_keys.json. Restart FRIDAY after changing key/model.")
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
         form.addRow("Gemini API key", self.gemini_api_key)
@@ -310,11 +318,11 @@ class FridaySettingsDialog(QDialog):
         """)
         for item in OPENAI_REALTIME_VOICE_OPTIONS:
             self.openai_voice.addItem(item["label"], item["name"])
-        test_btn = QPushButton("OpenAI Bağlantısını Test Et")
+        test_btn = QPushButton("Test OpenAI Connection")
         test_btn.clicked.connect(self._test_openai)
         info = QLabel(
-            "OpenAI key config/friday_settings.json ve legacy config/api_keys.json içine yazılır. "
-            "OpenAI Realtime modunda mikrofon, düşünme, tool/function calling ve ses çıkışı doğrudan OpenAI üzerinden çalışır. Kadın/erkek ses profili OpenAI voice alanından seçilir. Vision için kamera snapshot sonucu Realtime oturumuna araç çıktısı olarak döner."
+            "The OpenAI key is saved to config/friday_settings.json and mirrored to legacy config/api_keys.json. "
+            "In OpenAI Realtime mode, microphone, reasoning, tool/function calling and voice output run through OpenAI. Camera snapshots are returned as tool output for vision."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
@@ -323,8 +331,23 @@ class FridaySettingsDialog(QDialog):
         form.addRow("Vision model", self.openai_vision_model)
         form.addRow("Realtime model", self.openai_realtime_model)
         form.addRow("TTS model", self.openai_tts_model)
-        form.addRow("OpenAI Realtime sesi", self.openai_voice)
+        form.addRow("OpenAI Realtime voice", self.openai_voice)
         form.addRow("", test_btn)
+        form.addRow("", info)
+        return w
+
+    def _privacy_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.camera_enabled = QCheckBox("Allow camera / vision access")
+        self.camera_enabled.setToolTip("When disabled, FRIDAY will refuse camera commands even if the user asks to open the camera.")
+        info = QLabel(
+            "Camera Access is a hard privacy gate. If it is disabled, voice commands such as 'open camera' or 'look at the camera' will be rejected until you enable it again. Shortcut: F6."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8fa1b8;")
+        form.addRow("Camera Access", self.camera_enabled)
         form.addRow("", info)
         return w
 
@@ -337,6 +360,9 @@ class FridaySettingsDialog(QDialog):
         fallback_idx = self.fallback_provider_combo.findData(normalize_fallback_provider(assistant.get("fallback_provider")))
         if fallback_idx >= 0:
             self.fallback_provider_combo.setCurrentIndex(fallback_idx)
+        ui_idx = self.ui_language_combo.findData(normalize_ui_language(assistant.get("ui_language")))
+        if ui_idx >= 0:
+            self.ui_language_combo.setCurrentIndex(ui_idx)
         voice = s.get("voice", {})
         voice_name = str(voice.get("name") or "Aoede")
         idx = self.voice_combo.findData(voice_name)
@@ -364,6 +390,7 @@ class FridaySettingsDialog(QDialog):
         voice_idx = self.openai_voice.findData(str(openai.get("voice") or DEFAULT_OPENAI_VOICE))
         if voice_idx >= 0:
             self.openai_voice.setCurrentIndex(voice_idx)
+        self.camera_enabled.setChecked(bool(s.get("privacy", {}).get("camera_enabled", get_friday_camera_enabled())))
 
     def _refresh_sc_endpoint_preview(self) -> None:
         self.sc_endpoint_preview.setText(api_url_from_base(self.sc_base_url.text()))
@@ -380,6 +407,7 @@ class FridaySettingsDialog(QDialog):
             "voice": {"name": voice_name, "language": self.voice_language.text().strip() or "tr-TR", "character_gender": "female" if voice_name in female_names else "male"},
             "assistant": {
                 "response_language": normalize_response_language(self.response_language_combo.currentData()),
+                "ui_language": normalize_ui_language(self.ui_language_combo.currentData()),
                 "ai_provider": normalize_ai_provider(self.ai_provider_combo.currentData()),
                 "fallback_provider": normalize_fallback_provider(self.fallback_provider_combo.currentData()),
             },
@@ -393,17 +421,18 @@ class FridaySettingsDialog(QDialog):
                 "tts_model": self.openai_tts_model.text().strip() or DEFAULT_OPENAI_TTS_MODEL,
                 "voice": str(self.openai_voice.currentData() or DEFAULT_OPENAI_VOICE),
             },
+            "privacy": {"camera_enabled": bool(self.camera_enabled.isChecked())},
         }
 
     def _save(self) -> None:
         try:
             saved = save_settings(self._collect())
-            self.result_box.setPlainText("Ayarlar kaydedildi. Değişikliklerin tamamı için Friday'i yeniden başlatman önerilir.\n\n" + json.dumps(saved, ensure_ascii=False, indent=2))
+            self.result_box.setPlainText("Settings saved. Restart FRIDAY to apply interface, voice and camera privacy changes everywhere.\n\n" + json.dumps(saved, ensure_ascii=False, indent=2))
         except Exception as exc:
-            QMessageBox.critical(self, "Kayıt hatası", str(exc))
+            QMessageBox.critical(self, "Save error", str(exc))
 
     def _test_security_center(self) -> None:
-        self.result_box.setPlainText("Security Center bağlantısı test ediliyor...")
+        self.result_box.setPlainText("Testing Security Center connection...")
         if self._test_thread and self._test_thread.isRunning():
             return
         try:
@@ -417,7 +446,7 @@ class FridaySettingsDialog(QDialog):
 
 
     def _test_openai(self) -> None:
-        self.result_box.setPlainText("OpenAI bağlantısı test ediliyor...")
+        self.result_box.setPlainText("Testing OpenAI connection...")
         if self._openai_test_thread and self._openai_test_thread.isRunning():
             return
         self._openai_test_thread = _OpenAITestThread(

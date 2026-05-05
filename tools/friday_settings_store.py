@@ -18,6 +18,8 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_VOICE = "Aoede"
 DEFAULT_LANGUAGE = "tr-TR"
 DEFAULT_RESPONSE_LANGUAGE = "tr"
+DEFAULT_UI_LANGUAGE = "en"
+DEFAULT_CAMERA_ENABLED = True
 DEFAULT_AI_PROVIDER = "gemini"
 DEFAULT_FALLBACK_PROVIDER = "openai"
 DEFAULT_OPENAI_TEXT_MODEL = "gpt-4.1-mini"
@@ -27,32 +29,32 @@ DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_VOICE = "marin"
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
-    {"name": "Aoede", "group": "Kadın", "label": "Aoede · Kadın / soft"},
-    {"name": "Leda", "group": "Kadın", "label": "Leda · Kadın / net"},
-    {"name": "Kore", "group": "Kadın", "label": "Kore · Kadın / dengeli"},
-    {"name": "Zephyr", "group": "Kadın", "label": "Zephyr · Kadın / hafif"},
-    {"name": "Callirrhoe", "group": "Kadın", "label": "Callirrhoe · Kadın / premium"},
-    {"name": "Autonoe", "group": "Kadın", "label": "Autonoe · Kadın / sakin"},
-    {"name": "Puck", "group": "Erkek", "label": "Puck · Erkek / enerjik"},
-    {"name": "Charon", "group": "Erkek", "label": "Charon · Erkek / tok"},
-    {"name": "Fenrir", "group": "Erkek", "label": "Fenrir · Erkek / güçlü"},
-    {"name": "Orus", "group": "Erkek", "label": "Orus · Erkek / profesyonel"},
-    {"name": "Iapetus", "group": "Erkek", "label": "Iapetus · Erkek / derin"},
-    {"name": "Umbriel", "group": "Erkek", "label": "Umbriel · Erkek / ciddi"},
-    {"name": "Algieba", "group": "Erkek", "label": "Algieba · Erkek / dengeli"},
+    {"name": "Aoede", "group": "Female", "label": "Aoede · Female / soft"},
+    {"name": "Leda", "group": "Female", "label": "Leda · Female / clear"},
+    {"name": "Kore", "group": "Female", "label": "Kore · Female / balanced"},
+    {"name": "Zephyr", "group": "Female", "label": "Zephyr · Female / light"},
+    {"name": "Callirrhoe", "group": "Female", "label": "Callirrhoe · Female / premium"},
+    {"name": "Autonoe", "group": "Female", "label": "Autonoe · Female / calm"},
+    {"name": "Puck", "group": "Male", "label": "Puck · Male / energetic"},
+    {"name": "Charon", "group": "Male", "label": "Charon · Male / deep"},
+    {"name": "Fenrir", "group": "Male", "label": "Fenrir · Male / strong"},
+    {"name": "Orus", "group": "Male", "label": "Orus · Male / professional"},
+    {"name": "Iapetus", "group": "Male", "label": "Iapetus · Male / deep"},
+    {"name": "Umbriel", "group": "Male", "label": "Umbriel · Male / serious"},
+    {"name": "Algieba", "group": "Male", "label": "Algieba · Male / balanced"},
 ]
 
 OPENAI_REALTIME_VOICE_OPTIONS: List[Dict[str, str]] = [
-    {"name": "marin", "group": "Kadın", "label": "marin · Kadın / en doğal · önerilen"},
-    {"name": "coral", "group": "Kadın", "label": "coral · Kadın / sıcak"},
-    {"name": "shimmer", "group": "Kadın", "label": "shimmer · Kadın / parlak"},
-    {"name": "sage", "group": "Kadın", "label": "sage · Kadın / sakin"},
-    {"name": "cedar", "group": "Erkek", "label": "cedar · Erkek / en doğal · önerilen"},
-    {"name": "alloy", "group": "Erkek", "label": "alloy · Erkek / dengeli"},
-    {"name": "ash", "group": "Erkek", "label": "ash · Erkek / tok"},
-    {"name": "ballad", "group": "Erkek", "label": "ballad · Erkek / yumuşak"},
-    {"name": "echo", "group": "Erkek", "label": "echo · Erkek / net"},
-    {"name": "verse", "group": "Erkek", "label": "verse · Erkek / anlatıcı"},
+    {"name": "marin", "group": "Female", "label": "marin · Female / most natural · recommended"},
+    {"name": "coral", "group": "Female", "label": "coral · Female / warm"},
+    {"name": "shimmer", "group": "Female", "label": "shimmer · Female / bright"},
+    {"name": "sage", "group": "Female", "label": "sage · Female / calm"},
+    {"name": "cedar", "group": "Male", "label": "cedar · Male / most natural · recommended"},
+    {"name": "alloy", "group": "Male", "label": "alloy · Male / balanced"},
+    {"name": "ash", "group": "Male", "label": "ash · Male / deep"},
+    {"name": "ballad", "group": "Male", "label": "ballad · Male / soft"},
+    {"name": "echo", "group": "Male", "label": "echo · Male / clear"},
+    {"name": "verse", "group": "Male", "label": "verse · Male / narrator"},
 ]
 
 DEFAULTS: Dict[str, Any] = {
@@ -63,8 +65,12 @@ DEFAULTS: Dict[str, Any] = {
     },
     "assistant": {
         "response_language": DEFAULT_RESPONSE_LANGUAGE,
+        "ui_language": DEFAULT_UI_LANGUAGE,
         "ai_provider": DEFAULT_AI_PROVIDER,
         "fallback_provider": DEFAULT_FALLBACK_PROVIDER,
+    },
+    "privacy": {
+        "camera_enabled": DEFAULT_CAMERA_ENABLED,
     },
     "security_center": {
         "base_url": DEFAULT_SECURITY_CENTER_BASE_URL,
@@ -157,6 +163,11 @@ def _legacy_to_settings() -> Dict[str, Any]:
         ai_provider = api.get("friday_ai_provider")
         if ai_provider:
             merged.setdefault("assistant", {})["ai_provider"] = str(ai_provider)
+        ui_lang = api.get("friday_ui_language")
+        if ui_lang:
+            merged.setdefault("assistant", {})["ui_language"] = str(ui_lang)
+        if "friday_camera_enabled" in api:
+            merged.setdefault("privacy", {})["camera_enabled"] = normalize_camera_enabled(api.get("friday_camera_enabled"))
     sc = _read_json(SECURITY_CENTER_PATH)
     if sc:
         base = sc.get("base_url") or sc.get("security_center_base_url")
@@ -187,6 +198,10 @@ def load_settings() -> Dict[str, Any]:
     settings.setdefault("voice", {}).setdefault("language", DEFAULT_LANGUAGE)
     settings.setdefault("assistant", {}).setdefault("response_language", DEFAULT_RESPONSE_LANGUAGE)
     settings["assistant"]["response_language"] = normalize_response_language(settings["assistant"].get("response_language"))
+    settings["assistant"].setdefault("ui_language", DEFAULT_UI_LANGUAGE)
+    settings["assistant"]["ui_language"] = normalize_ui_language(settings["assistant"].get("ui_language"))
+    settings.setdefault("privacy", {}).setdefault("camera_enabled", DEFAULT_CAMERA_ENABLED)
+    settings["privacy"]["camera_enabled"] = normalize_camera_enabled(settings["privacy"].get("camera_enabled"))
     settings["assistant"]["ai_provider"] = normalize_ai_provider(settings["assistant"].get("ai_provider"))
     settings["assistant"]["fallback_provider"] = normalize_fallback_provider(settings["assistant"].get("fallback_provider"))
     settings.setdefault("gemini", {}).setdefault("model", DEFAULT_GEMINI_MODEL)
@@ -207,6 +222,10 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged["security_center"]["timeout"] = int(merged["security_center"].get("timeout") or 25)
     merged.setdefault("assistant", {})["response_language"] = normalize_response_language(
         merged.get("assistant", {}).get("response_language")
+    )
+    merged["assistant"]["ui_language"] = normalize_ui_language(merged.get("assistant", {}).get("ui_language"))
+    merged.setdefault("privacy", {})["camera_enabled"] = normalize_camera_enabled(
+        merged.get("privacy", {}).get("camera_enabled")
     )
     merged["assistant"]["ai_provider"] = normalize_ai_provider(merged.get("assistant", {}).get("ai_provider"))
     merged["assistant"]["fallback_provider"] = normalize_fallback_provider(merged.get("assistant", {}).get("fallback_provider"))
@@ -234,6 +253,12 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
     api["friday_character_gender"] = "female" if api["friday_voice_name"] in female_names else "male"
     api["friday_response_language"] = normalize_response_language(
         settings.get("assistant", {}).get("response_language")
+    )
+    api["friday_ui_language"] = normalize_ui_language(
+        settings.get("assistant", {}).get("ui_language")
+    )
+    api["friday_camera_enabled"] = normalize_camera_enabled(
+        settings.get("privacy", {}).get("camera_enabled")
     )
     if gemini.get("api_key"):
         api["gemini_api_key"] = str(gemini.get("api_key") or "")
@@ -296,6 +321,26 @@ def normalize_response_language(value: Any) -> str:
     return DEFAULT_RESPONSE_LANGUAGE
 
 
+def normalize_ui_language(value: Any) -> str:
+    raw = str(value or DEFAULT_UI_LANGUAGE).strip().lower()
+    if raw in {"tr", "turkish", "turkce", "türkçe", "tr-tr"}:
+        return "tr"
+    if raw in {"en", "eng", "english", "ing", "ingilizce", "en-us", "en-gb"}:
+        return "en"
+    return DEFAULT_UI_LANGUAGE
+
+
+def normalize_camera_enabled(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    raw = str(value).strip().lower()
+    if raw in {"0", "false", "no", "off", "disabled", "disable", "kapali", "kapalı", "hayir", "hayır"}:
+        return False
+    if raw in {"1", "true", "yes", "on", "enabled", "enable", "acik", "açık", "evet"}:
+        return True
+    return DEFAULT_CAMERA_ENABLED
+
+
 def get_friday_voice_name() -> str:
     return str(load_settings().get("voice", {}).get("name") or DEFAULT_VOICE)
 
@@ -310,6 +355,30 @@ def get_friday_response_language() -> str:
 
 def get_friday_response_language_label() -> str:
     return "English" if get_friday_response_language() == "en" else "Türkçe"
+
+
+def get_friday_ui_language() -> str:
+    return normalize_ui_language(load_settings().get("assistant", {}).get("ui_language"))
+
+
+def get_friday_ui_language_label() -> str:
+    return "Türkçe" if get_friday_ui_language() == "tr" else "English"
+
+
+def get_friday_camera_enabled() -> bool:
+    return normalize_camera_enabled(load_settings().get("privacy", {}).get("camera_enabled"))
+
+
+def get_friday_camera_disabled_message() -> str:
+    if get_friday_ui_language() == "tr" or get_friday_response_language() == "tr":
+        return "Kamera şu anda FRIDAY ayarlarından devre dışı. Kamera açamam; PC Settings veya FRIDAY Settings içinden Camera Access'i etkinleştir."
+    return "Camera access is currently disabled in FRIDAY settings. I cannot open the camera until Camera Access is enabled."
+
+
+def set_friday_camera_enabled(enabled: bool) -> Dict[str, Any]:
+    settings = load_settings()
+    settings.setdefault("privacy", {})["camera_enabled"] = bool(enabled)
+    return save_settings(settings)
 
 
 def get_friday_response_language_instruction() -> str:
@@ -399,6 +468,8 @@ def bootstrap_environment() -> Dict[str, Any]:
     response_language = normalize_response_language(settings.get("assistant", {}).get("response_language"))
     os.environ["FRIDAY_RESPONSE_LANGUAGE"] = response_language
     assistant = settings.get("assistant", {})
+    os.environ["FRIDAY_UI_LANGUAGE"] = normalize_ui_language(assistant.get("ui_language"))
+    os.environ["FRIDAY_CAMERA_ENABLED"] = "1" if normalize_camera_enabled(settings.get("privacy", {}).get("camera_enabled")) else "0"
     os.environ["FRIDAY_AI_PROVIDER"] = normalize_ai_provider(assistant.get("ai_provider"))
     os.environ["FRIDAY_FALLBACK_PROVIDER"] = normalize_fallback_provider(assistant.get("fallback_provider"))
     openai = settings.get("openai", {})

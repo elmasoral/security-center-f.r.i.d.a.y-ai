@@ -34,6 +34,8 @@ try:
         get_friday_ai_provider,
         get_friday_fallback_provider,
         get_openai_api_key,
+        get_friday_camera_enabled,
+        get_friday_camera_disabled_message,
     )
 except Exception:
     def get_friday_voice_name() -> str:
@@ -47,6 +49,10 @@ except Exception:
         return "openai"
     def get_openai_api_key() -> str:
         return ""
+    def get_friday_camera_enabled() -> bool:
+        return True
+    def get_friday_camera_disabled_message() -> str:
+        return "Camera access is currently disabled in FRIDAY settings. I cannot open the camera until Camera Access is enabled."
 
 try:
     import PIL.Image
@@ -614,6 +620,22 @@ def screen_process(
         return False
 
     print(f"[Vision] ▶ angle={angle!r}  question='{user_text[:80]}'")
+
+    if angle == "camera":
+        try:
+            if not bool(get_friday_camera_enabled()):
+                msg = get_friday_camera_disabled_message()
+                print("[Vision] ⛔ " + msg)
+                try:
+                    if player:
+                        player.write_log("FRIDAY: " + msg)
+                except Exception:
+                    pass
+                if params.get("_return_text"):
+                    return msg
+                return False
+        except Exception:
+            pass
 
     camera_started = bool(params.get("_camera_started"))
 

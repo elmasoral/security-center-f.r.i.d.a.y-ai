@@ -59,6 +59,8 @@ try:
         get_openai_api_key,
         get_openai_realtime_model,
         get_openai_voice,
+        get_friday_camera_enabled,
+        get_friday_camera_disabled_message,
     )
     FRIDAY_SETTINGS = bootstrap_environment()
     FRIDAY_VOICE_NAME = get_friday_voice_name()
@@ -70,6 +72,8 @@ try:
     FRIDAY_AI_PROVIDER_LABEL = get_friday_ai_provider_label()
     FRIDAY_OPENAI_REALTIME_MODEL = get_openai_realtime_model()
     FRIDAY_OPENAI_VOICE = get_openai_voice()
+    FRIDAY_CAMERA_ENABLED = get_friday_camera_enabled()
+    FRIDAY_CAMERA_DISABLED_MESSAGE = get_friday_camera_disabled_message()
 except Exception as _friday_settings_error:
     print(f"[FRIDAY] Settings bridge warning: {_friday_settings_error}")
     FRIDAY_VOICE_NAME = os.environ.get("FRIDAY_VOICE_NAME", "Aoede")
@@ -84,6 +88,8 @@ except Exception as _friday_settings_error:
     FRIDAY_AI_PROVIDER_LABEL = {"gemini":"Gemini","openai":"OpenAI","auto":"Auto / Fallback"}.get(FRIDAY_AI_PROVIDER, "Gemini")
     FRIDAY_OPENAI_REALTIME_MODEL = os.environ.get("FRIDAY_OPENAI_REALTIME_MODEL", "gpt-realtime")
     FRIDAY_OPENAI_VOICE = os.environ.get("FRIDAY_OPENAI_VOICE", "marin")
+    FRIDAY_CAMERA_ENABLED = os.environ.get("FRIDAY_CAMERA_ENABLED", "1") != "0"
+    FRIDAY_CAMERA_DISABLED_MESSAGE = "Camera access is currently disabled in FRIDAY settings. I cannot open the camera until Camera Access is enabled."
 # --- /MEDPOV FRIDAY runtime settings bridge ---
 
 
@@ -99,6 +105,7 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+MEDPOV_PROFILE_PATH = BASE_DIR / "knowledge" / "medpov_profile.txt"
 LIVE_MODEL          = "gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
@@ -136,6 +143,14 @@ def _load_system_prompt() -> str:
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
+
+
+def _load_medpov_profile() -> str:
+    try:
+        text = MEDPOV_PROFILE_PATH.read_text(encoding="utf-8").strip()
+        return text[:5000]
+    except Exception:
+        return ""
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
@@ -851,6 +866,12 @@ class JarvisLive:
         mem_str = format_memory_for_prompt(memory)
         now = datetime.now().strftime("%A, %B %d, %Y — %I:%M %p")
         base = _load_system_prompt()
+        medpov_profile = _load_medpov_profile()
+        camera_guard = (
+            "Camera access is enabled. Use camera tools only when requested or required."
+            if self._camera_is_enabled()
+            else "Camera access is disabled by user settings. If the user asks to open/use/analyze camera, refuse briefly and say Camera Access is disabled. Do not call camera tools."
+        )
         parts = [
             "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center.",
             "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
@@ -861,11 +882,14 @@ class JarvisLive:
             "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
             "If the user asks to evaluate FRIDAY's voice, microphone, speaker, or sound quality, do not use the camera; answer briefly or ask for an audio-specific detail.",
             "Never invent camera observations. Only describe the camera/screen after screen_process returns a result.",
+            camera_guard,
             "When a tool returns a direct result, summarize it in a short human sentence.",
             f"Current date/time: {now}.",
             FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION,
             base,
         ]
+        if medpov_profile:
+            parts.append("MEDPOV permanent profile:\n" + medpov_profile)
         if mem_str:
             parts.append(mem_str)
         return "\n\n".join(p for p in parts if p)
@@ -1115,6 +1139,8 @@ class JarvisLive:
             angle = str((args or {}).get("angle") or "screen").lower().strip()
             tool_text = str((args or {}).get("text") or "")
             if angle == "camera":
+                if not self._camera_is_enabled():
+                    return self._camera_disabled_reply() + " Do not call camera tools again unless Camera Access is enabled."
                 # Hard safety gate: the model sometimes confuses hearing/audio
                 # checks with visual checks. Do not let those calls open the camera.
                 if self._looks_like_audio_status_request(tool_text):
@@ -1195,7 +1221,9 @@ class JarvisLive:
                 pass
             elif name == "screen_process":
                 angle = str(args.get("angle") or "screen").lower().strip()
-                if angle == "camera":
+                if angle == "camera" and not self._camera_is_enabled():
+                    output = self._camera_disabled_reply()
+                elif angle == "camera":
                     cancel_vision_requests()
                     if hasattr(self.ui, "start_camera_mode"):
                         self.ui.start_camera_mode(camera_index=None)
@@ -1829,6 +1857,42 @@ class JarvisLive:
         except Exception:
             pass
 
+    def _camera_is_enabled(self) -> bool:
+        try:
+            if hasattr(self.ui, "camera_access_enabled"):
+                return bool(self.ui.camera_access_enabled())
+        except Exception:
+            pass
+        try:
+            return bool(get_friday_camera_enabled())
+        except Exception:
+            return bool(globals().get("FRIDAY_CAMERA_ENABLED", True))
+
+    def _camera_disabled_reply(self) -> str:
+        try:
+            if hasattr(self.ui, "camera_disabled_message"):
+                msg = str(self.ui.camera_disabled_message() or "").strip()
+                if msg:
+                    return msg
+        except Exception:
+            pass
+        try:
+            return str(get_friday_camera_disabled_message())
+        except Exception:
+            return str(globals().get("FRIDAY_CAMERA_DISABLED_MESSAGE") or "Camera access is currently disabled in FRIDAY settings. I cannot open the camera until Camera Access is enabled.")
+
+    def _refuse_camera_disabled(self) -> bool:
+        msg = self._camera_disabled_reply()
+        try:
+            self.ui.write_log("FRIDAY: " + msg)
+        except Exception:
+            pass
+        try:
+            self.speak(msg)
+        except Exception:
+            pass
+        return True
+
     def _is_camera_direct_command(self, text: str) -> str | None:
         t = self._norm_text(text)
         if not t:
@@ -1913,20 +1977,24 @@ class JarvisLive:
         self._last_camera_mode_command_ts = now
 
         action = (action or "open").lower().strip()
+        if action != "close" and not self._camera_is_enabled():
+            return self._refuse_camera_disabled()
         if action == "close":
             cancel_vision_requests()
             if hasattr(self.ui, "stop_camera_mode"):
                 self.ui.stop_camera_mode()
             return True
 
-        self.ui.write_log("SYS: Görsel moda geçiyorum.")
+        self.ui.write_log("SYS: Camera vision mode opening.")
         if hasattr(self.ui, "start_camera_mode"):
             self.ui.start_camera_mode(camera_index=None)
         return True
 
     def _start_direct_camera_vision(self, text: str, source: str = "voice") -> bool:
+        if not self._camera_is_enabled():
+            return self._refuse_camera_disabled()
         now = time.time()
-        clean_text = (text or "Kameradan gördüğünü analiz et.").strip()
+        clean_text = (text or "Analyze what you see through the camera.").strip()
         norm_text = self._norm_text(clean_text)
         # Partial voice transcripts may repeat the exact same sentence. Ignore only ultra-fast duplicates,
         # but let a fresh camera command cancel the old analysis immediately.
@@ -1941,7 +2009,7 @@ class JarvisLive:
 
         if hasattr(self.ui, "start_camera_mode"):
             self.ui.start_camera_mode(camera_index=None)
-        self.ui.write_log("SYS: Görsel moda geçiyorum; kamera analizi başlatıldı.")
+        self.ui.write_log("SYS: Camera vision mode opening; camera analysis started.")
 
         threading.Thread(
             target=screen_process,
@@ -2164,6 +2232,8 @@ class JarvisLive:
         )
 
         parts = [time_ctx, lang_ctx, provider_ctx]
+        if medpov_profile:
+            parts.append("MEDPOV permanent profile:\n" + medpov_profile)
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -2219,10 +2289,14 @@ class JarvisLive:
                         self.ui.stop_camera_mode()
                     result = "Camera vision mode closed. Stay silent."
                 else:
-                    self._suppress_model_output(2.0)
-                    if hasattr(self.ui, "start_camera_mode"):
-                        self.ui.start_camera_mode(camera_index=None)
-                    result = "Camera vision mode opened. Stay silent."
+                    if not self._camera_is_enabled():
+                        self._suppress_model_output(2.0)
+                        result = self._camera_disabled_reply()
+                    else:
+                        self._suppress_model_output(2.0)
+                        if hasattr(self.ui, "start_camera_mode"):
+                            self.ui.start_camera_mode(camera_index=None)
+                        result = "Camera vision mode opened. Stay silent."
 
             elif name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
@@ -2258,17 +2332,22 @@ class JarvisLive:
 
             elif name == "screen_process":
                 angle = str(args.get("angle") or "screen").lower().strip()
-
-                # If the local voice interceptor already started camera analysis,
-                # ignore Gemini's duplicate tool call for a few seconds.
-                if angle == "camera" and (time.time() - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0)) < 4.5:
+                if angle == "camera" and not self._camera_is_enabled():
+                    self._suppress_model_output(2.0)
+                    result = self._camera_disabled_reply()
+                elif angle == "camera" and (time.time() - float(getattr(self, "_last_direct_camera_vision_ts", 0.0) or 0.0)) < 4.5:
+                    # If the local voice interceptor already started camera analysis,
+                    # ignore Gemini's duplicate tool call for a few seconds.
                     self._suppress_model_output(7.0)
                     result = "Camera vision analysis is already running silently. Do not speak or add commentary."
                 else:
                     if angle == "camera":
                         cancel_vision_requests()
                         if hasattr(self.ui, "start_camera_mode"):
-                            self.ui.start_camera_mode(camera_index=None)
+                            started = self.ui.start_camera_mode(camera_index=None)
+                            if started is False:
+                                result = self._camera_disabled_reply()
+                                raise RuntimeError(result)
                         args["_camera_started"] = True
 
                     threading.Thread(

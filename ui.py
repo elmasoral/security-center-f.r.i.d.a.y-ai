@@ -23,10 +23,18 @@ try:
     from tools.friday_settings_store import (
         save_gemini_api_key_everywhere,
         bootstrap_environment,
+        get_friday_ui_language,
+        get_friday_camera_enabled,
+        get_friday_camera_disabled_message,
+        set_friday_camera_enabled,
     )
 except Exception:
     save_gemini_api_key_everywhere = None
     bootstrap_environment = None
+    def get_friday_ui_language(): return "en"
+    def get_friday_camera_enabled(): return True
+    def get_friday_camera_disabled_message(): return "Camera access is currently disabled in FRIDAY settings."
+    def set_friday_camera_enabled(enabled): return {}
 
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
@@ -64,6 +72,17 @@ _MIN_W,     _MIN_H     = 1040, 640
 _LEFT_W  = 330
 _RIGHT_W = 470
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+
+
+def _ui_lang() -> str:
+    try:
+        return str(get_friday_ui_language() or "en").lower().strip()
+    except Exception:
+        return "en"
+
+
+def _ui_text(en: str, tr: str | None = None) -> str:
+    return tr if _ui_lang() == "tr" and tr is not None else en
 
 
 class C:
@@ -2336,6 +2355,7 @@ class MainWindow(QMainWindow):
         self.on_text_command  = None
         self._muted           = False
         self._standby         = False
+        self._camera_access_enabled = bool(get_friday_camera_enabled())
         self._current_file: str | None = None
 
         central = QWidget()
@@ -2396,6 +2416,8 @@ class MainWindow(QMainWindow):
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
+        sc_camera = QShortcut(QKeySequence("F6"), self)
+        sc_camera.activated.connect(self._toggle_camera_access)
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -2720,11 +2742,11 @@ class MainWindow(QMainWindow):
         title.setObjectName("FridaySettingsTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        desc = QLabel("Ses, Gemini API ve Security Center bağlantı bilgilerini buradan değiştir.")
+        desc = QLabel(_ui_text("Voice, AI provider, language, camera privacy and Security Center settings.", "Ses, AI sağlayıcı, dil, kamera gizliliği ve Security Center ayarları."))
         desc.setObjectName("FridaySettingsDesc")
         desc.setWordWrap(True)
 
-        btn = QPushButton("Ayarları Aç     ›")
+        btn = QPushButton(_ui_text("Open Settings     ›", "Ayarları Aç     ›"))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(self._open_friday_settings_dialog)
 
@@ -2749,7 +2771,7 @@ class MainWindow(QMainWindow):
                 or getattr(mod, "FridaySettingsPanel", None)
             )
             if dialog_cls is None:
-                raise RuntimeError("tools/friday_settings_dialog.py içinde FridaySettingsDialog sınıfı bulunamadı.")
+                raise RuntimeError("FridaySettingsDialog class was not found in tools/friday_settings_dialog.py.")
 
             try:
                 dlg = dialog_cls(self)
@@ -2762,18 +2784,18 @@ class MainWindow(QMainWindow):
                 dlg.show()
                 self._friday_settings_dialog_ref = dlg
             else:
-                raise RuntimeError("Ayarlar penceresi exec/show desteklemiyor.")
+                raise RuntimeError("Settings window does not support exec/show.")
 
         except Exception as exc:
             QMessageBox.warning(
                 self,
                 "FRIDAY Settings",
-                "Ayarlar penceresi açılamadı.\n\n"
-                f"Hata: {exc}\n\n"
-                "Kontrol et:\n"
-                "- tools/friday_settings_dialog.py var mı?\n"
-                "- tools/friday_settings_store.py var mı?\n"
-                "- config/friday_settings.json yazılabilir mi?"
+                "Settings window could not be opened.\n\n"
+                f"Error: {exc}\n\n"
+                "Check:\n"
+                "- tools/friday_settings_dialog.py exists\n"
+                "- tools/friday_settings_store.py exists\n"
+                "- config/friday_settings.json is writable"
             )
 
     def _build_right_panel(self) -> QWidget:
@@ -2847,6 +2869,14 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         buttons.addWidget(self._mute_btn)
         lay.addLayout(buttons)
+
+        self._camera_btn = QPushButton("")
+        self._camera_btn.setFixedHeight(30)
+        self._camera_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        self._camera_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._camera_btn.clicked.connect(self._toggle_camera_access)
+        self._style_camera_btn()
+        lay.addWidget(self._camera_btn)
 
         fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
         fs_btn.setFixedHeight(30)
@@ -2925,11 +2955,11 @@ class MainWindow(QMainWindow):
 
         commands = [
             ("◉  Overview", "/sc overview", True),
-            ("▲  Son Tehditler", "/sc threats", True),
+            ("▲  Threats", "/sc threats", True),
             ("◇  Health", "/sc health", True),
             ("◎  Live", "/sc live", True),
-            ("⌁  IP Profil", "/sc ip 65.55.210.207", False),
-            ("✦  IP Analiz", "/sc analyze 65.55.210.207", False),
+            ("⌁  IP Profile", "/sc ip 65.55.210.207", False),
+            ("✦  IP Analyze", "/sc analyze 65.55.210.207", False),
             ("⬢  IP Block", "/sc block 1.2.3.4", False),
             ("✓  Resolve Event", "/sc resolve-event 124", False),
         ]
@@ -3013,7 +3043,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color};")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen", C.TEXT_MED))
+        lay.addWidget(_fl("[F4] Mute  ·  [F6] Camera  ·  [F11] Fullscreen", C.TEXT_MED))
         lay.addStretch()
         lay.addWidget(_fl("© MEDPOV Technologies", C.TEXT_DIM))
         lay.addWidget(_fl("|", C.BORDER_A))
@@ -3106,6 +3136,53 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ background: rgba(34,242,168,0.23); color: {C.WHITE}; }}
             """)
 
+    def _camera_disabled_message(self) -> str:
+        try:
+            return str(get_friday_camera_disabled_message())
+        except Exception:
+            return _ui_text(
+                "Camera access is currently disabled in FRIDAY settings. I cannot open the camera until Camera Access is enabled.",
+                "Kamera şu anda FRIDAY ayarlarından devre dışı. Camera Access etkinleştirilmeden kamerayı açamam."
+            )
+
+    def _style_camera_btn(self):
+        if not hasattr(self, "_camera_btn"):
+            return
+        if self._camera_access_enabled:
+            self._camera_btn.setText("📷  CAMERA ENABLED  [F6]")
+            self._camera_btn.setStyleSheet(f"""
+                QPushButton {{ background: rgba(34,242,168,0.10); color: {C.GREEN}; border: 1px solid rgba(34,242,168,0.34); border-radius: 11px; }}
+                QPushButton:hover {{ background: rgba(34,242,168,0.21); color: {C.WHITE}; }}
+            """)
+        else:
+            self._camera_btn.setText("📷  CAMERA DISABLED  [F6]")
+            self._camera_btn.setStyleSheet(f"""
+                QPushButton {{ background: rgba(255,59,107,0.12); color: {C.RED}; border: 1px solid rgba(255,59,107,0.45); border-radius: 11px; }}
+                QPushButton:hover {{ background: rgba(255,59,107,0.24); color: {C.WHITE}; }}
+            """)
+
+    def _toggle_camera_access(self):
+        self._camera_access_enabled = not bool(getattr(self, "_camera_access_enabled", True))
+        try:
+            set_friday_camera_enabled(self._camera_access_enabled)
+        except Exception as exc:
+            self._log.append_log(f"ERR: Camera access setting could not be saved — {exc}")
+        if not self._camera_access_enabled:
+            try:
+                self.stop_camera_mode()
+            except Exception:
+                pass
+            self._log.append_log("SYS: Camera access disabled. Camera commands will be refused.")
+        else:
+            self._log.append_log("SYS: Camera access enabled.")
+        self._style_camera_btn()
+
+    def camera_access_enabled(self) -> bool:
+        return bool(getattr(self, "_camera_access_enabled", True))
+
+    def camera_disabled_message(self) -> str:
+        return self._camera_disabled_message()
+
     def _send(self):
         txt = self._input.text().strip()
         if not txt: return
@@ -3122,6 +3199,9 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def start_camera_mode(self, camera_index: int | None = None) -> bool:
+        if not self.camera_access_enabled():
+            self._log.append_log("SYS: " + self._camera_disabled_message())
+            return False
         self._camera_start_sig.emit(camera_index)
         return True
 
@@ -3252,6 +3332,9 @@ class MainWindow(QMainWindow):
 
                 settings_data.setdefault("assistant", {})
                 settings_data["assistant"].setdefault("response_language", "tr")
+                settings_data["assistant"].setdefault("ui_language", "en")
+                settings_data.setdefault("privacy", {})
+                settings_data["privacy"].setdefault("camera_enabled", True)
 
                 settings_data.setdefault("gemini", {})
                 settings_data["gemini"]["api_key"] = key
@@ -3329,6 +3412,23 @@ class JarvisUI:
     def set_standby(self, enabled: bool):
         self._win._standby_sig.emit(bool(enabled))
 
+    def camera_access_enabled(self) -> bool:
+        try:
+            return bool(self._win.camera_access_enabled())
+        except Exception:
+            return True
+
+    def camera_disabled_message(self) -> str:
+        try:
+            return str(self._win.camera_disabled_message())
+        except Exception:
+            return "Camera access is currently disabled in FRIDAY settings."
+
+    def set_camera_access(self, enabled: bool):
+        current = self.camera_access_enabled()
+        if bool(enabled) != current:
+            self._win._toggle_camera_access()
+
     @property
     def current_file(self) -> str | None:
         return self._win._drop_zone.current_file()
@@ -3388,18 +3488,18 @@ def _mp_friday_open_settings_dialog(self):
         dlg.exec()
         try:
             if hasattr(self, "write_log"):
-                self.write_log("FRIDAY: Ayarlar güncellendi. Bazı değişiklikler için yeniden başlatma önerilir.")
+                self.write_log("FRIDAY: Settings updated. Restart is recommended for some changes.")
         except Exception:
             pass
     except Exception as e:
         try:
             if hasattr(self, "write_log"):
-                self.write_log(f"ERR: Ayarlar paneli açılamadı — {e}")
+                self.write_log(f"ERR: Settings panel could not be opened — {e}")
         except Exception:
             pass
         try:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Ayarlar", str(e))
+            QMessageBox.critical(self, "Settings", str(e))
         except Exception:
             print("FRIDAY settings dialog error:", e)
 
@@ -3431,7 +3531,7 @@ def _mp_friday_build_settings_panel(self):
     info = QLabel("Voice · Security Center · Gemini")
     info.setFont(QFont("Courier New", 7))
     info.setStyleSheet(f"color:{dim};")
-    btn = QPushButton("Ayarları Aç")
+    btn = QPushButton("Open Settings")
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.clicked.connect(lambda: self._open_friday_settings_dialog())
     lay.addWidget(head)
@@ -3691,11 +3791,11 @@ def _mpv3_build_security_center_quick_panel(self) -> QWidget:
 
     commands = [
         ("◉ Overview", "/sc overview", True),
-        ("▲ Son Tehditler", "/sc threats", True),
+        ("▲ Threats", "/sc threats", True),
         ("◇ Health", "/sc health", True),
         ("◉ Live", "/sc live", True),
-        ("⌁ IP Profil", "/sc ip 65.55.210.207", False),
-        ("✦ IP Analiz", "/sc analyze 65.55.210.207", False),
+        ("⌁ IP Profile", "/sc ip 65.55.210.207", False),
+        ("✦ IP Analyze", "/sc analyze 65.55.210.207", False),
         ("● IP Block", "/sc block 1.2.3.4", False),
         ("✓ Resolve Event", "/sc resolve-event 124", False),
     ]
@@ -4140,13 +4240,13 @@ def _mpv5_open_pc_settings_dialog(self):
         dlg.exec()
         try:
             if hasattr(self, "write_log"):
-                self.write_log("FRIDAY: PC Settings güncellendi. Güvenilir klasörler ve backup ayarları yenilendi.")
+                self.write_log("FRIDAY: PC Settings updated. Trusted folders and backup settings refreshed.")
         except Exception:
             pass
     except Exception as e:
         try:
             if hasattr(self, "write_log"):
-                self.write_log(f"ERR: PC Settings paneli açılamadı — {e}")
+                self.write_log(f"ERR: PC Settings panel could not be opened — {e}")
         except Exception:
             pass
         try:
@@ -4239,15 +4339,15 @@ def _mpv5_build_friday_settings_panel(self):
 
     left = _mpv5_build_mini_setting_card(
         "FRIDAY",
-        "AI provider, ses, Security Center ve model ayarları.",
-        "Ayarları Aç",
+        "AI provider, voice, Security Center and model settings.",
+        "Open Settings",
         getattr(C, "ACC2", "#ffb86b"),
         lambda _=False: self._open_friday_settings_dialog(),
     )
     right = _mpv5_build_mini_setting_card(
         "PC SETTINGS",
-        "Trusted folders, backup, zip, note, screenshot yetkileri.",
-        "PC Ayarları",
+        "Trusted folders, backup, zip, notes, screenshot permissions.",
+        "PC Settings",
         getattr(C, "PRI", "#28e9ff"),
         lambda _=False: self._open_pc_settings_dialog(),
     )
@@ -4255,7 +4355,7 @@ def _mpv5_build_friday_settings_panel(self):
     top.addWidget(right, stretch=1)
     outer.addLayout(top)
 
-    status = QLabel("PC Workspace: klasör ekle → FRIDAY kopyalar, zipler, yedekler, not alır ve ekran görüntüsü kaydeder.")
+    status = QLabel("PC Workspace: add folders → FRIDAY can copy, zip, back up, take notes and capture screenshots.")
     status.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
     status.setWordWrap(True)
     status.setStyleSheet(f"color:{C.TEXT_DIM}; padding: 0 2px 1px 2px;")

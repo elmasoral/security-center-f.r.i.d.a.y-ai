@@ -7,7 +7,8 @@
   "assistant": {
     "response_language": "tr",
     "ai_provider": "gemini",
-    "fallback_provider": "openai"
+    "fallback_provider": "openai",
+    "ui_language": "en"
   },
   "security_center": {
     "base_url": "https://siteadi.com/security-center",
@@ -26,5 +27,8 @@
     "realtime_model": "gpt-realtime",
     "tts_model": "gpt-4o-mini-tts",
     "voice": "marin"
+  },
+  "privacy": {
+    "camera_enabled": true
   }
 }
