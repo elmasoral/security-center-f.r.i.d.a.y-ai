@@ -1,11 +1,13 @@
-﻿{
+{
   "voice": {
     "name": "Aoede",
     "language": "tr-TR",
     "character_gender": "female"
   },
   "assistant": {
-    "response_language": "tr"
+    "response_language": "tr",
+    "ai_provider": "gemini",
+    "fallback_provider": "openai"
   },
   "security_center": {
     "base_url": "https://siteadi.com/security-center",
@@ -16,5 +18,12 @@
   "gemini": {
     "api_key": "",
     "model": "gemini-2.5-flash-native-audio-preview-12-2025"
+  },
+  "openai": {
+    "api_key": "",
+    "text_model": "gpt-4.1-mini",
+    "vision_model": "gpt-4.1-mini",
+    "realtime_model": "gpt-realtime",
+    "voice": "marin"
   }
 }

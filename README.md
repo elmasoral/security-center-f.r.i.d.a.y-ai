@@ -630,3 +630,15 @@ F.R.I.D.A.Y Command Center was designed by **MEDPOV**.
 
 MEDPOV Security Center product page:  
 https://medpov.com/product/medpov-security-center
+
+## v2.7.0 Multi AI Provider
+
+FRIDAY v2.7.0 ile Gemini yanında OpenAI provider desteği eklenmiştir. Ayarlar panelinden `Gemini`, `OpenAI` veya `Auto / Fallback` seçilebilir. OpenAI modu yazılı komut routing, kamera/görüntü analizi ve dosya AI işlemlerini OpenAI üzerinden çalıştırabilir. Mevcut Gemini Live bağlantısı ses/transkripsiyon köprüsü ve eski davranış için korunur.
+
+OpenAI kullanmak için:
+
+1. `pip install -r requirements.txt`
+2. FRIDAY > Ayarlar > OpenAI sekmesine API key gir.
+3. OpenAI bağlantısını test et.
+4. AI Provider sekmesinden OpenAI veya Auto / Fallback seç.
+5. Kaydet ve uygulamayı yeniden başlat.

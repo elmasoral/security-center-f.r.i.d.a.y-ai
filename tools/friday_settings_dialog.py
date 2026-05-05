@@ -26,7 +26,13 @@ from PyQt6.QtWidgets import (
 
 from .friday_settings_store import (
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENAI_TEXT_MODEL,
+    DEFAULT_OPENAI_VISION_MODEL,
+    DEFAULT_OPENAI_REALTIME_MODEL,
+    DEFAULT_OPENAI_VOICE,
     VOICE_OPTIONS,
+    normalize_ai_provider,
+    normalize_fallback_provider,
     normalize_response_language,
     api_url_from_base,
     load_settings,
@@ -80,12 +86,57 @@ class _SecurityCenterTestThread(QThread):
             self.finished_error.emit(str(exc))
 
 
+class _OpenAITestThread(QThread):
+    finished_ok = pyqtSignal(str)
+    finished_error = pyqtSignal(str)
+
+    def __init__(self, api_key: str, model: str, timeout: int = 20) -> None:
+        super().__init__()
+        self.api_key = api_key
+        self.model = model or DEFAULT_OPENAI_TEXT_MODEL
+        self.timeout = timeout
+
+    def run(self) -> None:
+        try:
+            if not self.api_key.strip():
+                raise RuntimeError("OpenAI API key boş.")
+            payload = json.dumps({
+                "model": self.model,
+                "input": "Reply with only: OK"
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/responses",
+                data=payload,
+                headers={
+                    "Authorization": "Bearer " + self.api_key.strip(),
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "MEDPOV-Friday-OpenAI-Test",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw)
+            except Exception:
+                data = {"raw": raw[:500]}
+            rid = data.get("id") or "response_received"
+            self.finished_ok.emit(f"OpenAI bağlantısı başarılı. Model: {self.model}\nResponse: {rid}")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            self.finished_error.emit(f"HTTP {exc.code}\n{raw[:1000]}")
+        except Exception as exc:
+            self.finished_error.emit(str(exc))
+
+
 class FridaySettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("MEDPOV FRIDAY Ayarları")
-        self.setMinimumWidth(680)
+        self.setMinimumWidth(760)
         self._test_thread = None
+        self._openai_test_thread = None
         self.settings = load_settings()
         self._build_ui()
         self._load_values()
@@ -118,13 +169,15 @@ class FridaySettingsDialog(QDialog):
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         title.setStyleSheet("color:#ffb86b; padding: 4px 0 8px 0;")
         root.addWidget(title)
-        subtitle = QLabel("Ses, cevap dili, Security Center bağlantısı ve Gemini API ayarlarını buradan güncelleyebilirsin.")
+        subtitle = QLabel("AI sağlayıcı, ses, cevap dili, Security Center, Gemini ve OpenAI ayarlarını buradan güncelleyebilirsin.")
         subtitle.setStyleSheet("color:#8fa1b8; padding-bottom:8px;")
         root.addWidget(subtitle)
         tabs = QTabWidget()
+        tabs.addTab(self._provider_tab(), "AI Provider")
         tabs.addTab(self._voice_tab(), "Ses")
         tabs.addTab(self._security_tab(), "Security Center")
         tabs.addTab(self._gemini_tab(), "Gemini")
+        tabs.addTab(self._openai_tab(), "OpenAI")
         root.addWidget(tabs)
         self.result_box = QTextEdit()
         self.result_box.setReadOnly(True)
@@ -141,6 +194,29 @@ class FridaySettingsDialog(QDialog):
         actions.addWidget(close_btn)
         actions.addWidget(save_btn)
         root.addLayout(actions)
+
+
+    def _provider_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.ai_provider_combo = QComboBox()
+        self.ai_provider_combo.addItem("Gemini · mevcut canlı ses + tool orchestration", "gemini")
+        self.ai_provider_combo.addItem("OpenAI · komut/vision beyni + lokal TTS", "openai")
+        self.ai_provider_combo.addItem("Auto / Fallback · Gemini ana, OpenAI yedek", "auto")
+        self.fallback_provider_combo = QComboBox()
+        self.fallback_provider_combo.addItem("OpenAI", "openai")
+        self.fallback_provider_combo.addItem("Gemini", "gemini")
+        info = QLabel(
+            "Gemini modu eski davranışı korur. OpenAI modu yazılı komutları ve kamera/görüntü analizini OpenAI ile işler; "
+            "mikrofon transkripsiyon köprüsü için mevcut Live bağlantısı açık kalır. Auto modunda Gemini sorun yaşarsa vision/text tarafında OpenAI yedeği kullanılabilir."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8fa1b8;")
+        form.addRow("AI Provider", self.ai_provider_combo)
+        form.addRow("Fallback", self.fallback_provider_combo)
+        form.addRow("", info)
+        return w
 
     def _voice_tab(self) -> QWidget:
         w = QWidget()
@@ -210,15 +286,49 @@ class FridaySettingsDialog(QDialog):
         form.addRow("", info)
         return w
 
+
+    def _openai_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.openai_api_key = QLineEdit()
+        self.openai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_text_model = QLineEdit(DEFAULT_OPENAI_TEXT_MODEL)
+        self.openai_vision_model = QLineEdit(DEFAULT_OPENAI_VISION_MODEL)
+        self.openai_realtime_model = QLineEdit(DEFAULT_OPENAI_REALTIME_MODEL)
+        self.openai_voice = QLineEdit(DEFAULT_OPENAI_VOICE)
+        test_btn = QPushButton("OpenAI Bağlantısını Test Et")
+        test_btn.clicked.connect(self._test_openai)
+        info = QLabel(
+            "OpenAI key config/friday_settings.json ve legacy config/api_keys.json içine yazılır. "
+            "Vision için JPEG/base64 image input kullanılır; yazılı komutlar function calling ile lokal FRIDAY araçlarına yönlendirilir."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8fa1b8;")
+        form.addRow("OpenAI API key", self.openai_api_key)
+        form.addRow("Text/command model", self.openai_text_model)
+        form.addRow("Vision model", self.openai_vision_model)
+        form.addRow("Realtime model", self.openai_realtime_model)
+        form.addRow("Voice", self.openai_voice)
+        form.addRow("", test_btn)
+        form.addRow("", info)
+        return w
+
     def _load_values(self) -> None:
         s = self.settings
+        assistant = s.get("assistant", {})
+        provider_idx = self.ai_provider_combo.findData(normalize_ai_provider(assistant.get("ai_provider")))
+        if provider_idx >= 0:
+            self.ai_provider_combo.setCurrentIndex(provider_idx)
+        fallback_idx = self.fallback_provider_combo.findData(normalize_fallback_provider(assistant.get("fallback_provider")))
+        if fallback_idx >= 0:
+            self.fallback_provider_combo.setCurrentIndex(fallback_idx)
         voice = s.get("voice", {})
         voice_name = str(voice.get("name") or "Aoede")
         idx = self.voice_combo.findData(voice_name)
         if idx >= 0:
             self.voice_combo.setCurrentIndex(idx)
         self.voice_language.setText(str(voice.get("language") or "tr-TR"))
-        assistant = s.get("assistant", {})
         response_lang = normalize_response_language(assistant.get("response_language"))
         response_idx = self.response_language_combo.findData(response_lang)
         if response_idx >= 0:
@@ -231,6 +341,12 @@ class FridaySettingsDialog(QDialog):
         gemini = s.get("gemini", {})
         self.gemini_api_key.setText(str(gemini.get("api_key") or ""))
         self.gemini_model.setText(str(gemini.get("model") or DEFAULT_GEMINI_MODEL))
+        openai = s.get("openai", {})
+        self.openai_api_key.setText(str(openai.get("api_key") or ""))
+        self.openai_text_model.setText(str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL))
+        self.openai_vision_model.setText(str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL))
+        self.openai_realtime_model.setText(str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL))
+        self.openai_voice.setText(str(openai.get("voice") or DEFAULT_OPENAI_VOICE))
 
     def _refresh_sc_endpoint_preview(self) -> None:
         self.sc_endpoint_preview.setText(api_url_from_base(self.sc_base_url.text()))
@@ -245,9 +361,20 @@ class FridaySettingsDialog(QDialog):
         voice_name = str(self.voice_combo.currentData() or self.voice_combo.currentText() or "Aoede")
         return {
             "voice": {"name": voice_name, "language": self.voice_language.text().strip() or "tr-TR", "character_gender": "female" if voice_name in female_names else "male"},
-            "assistant": {"response_language": normalize_response_language(self.response_language_combo.currentData())},
+            "assistant": {
+                "response_language": normalize_response_language(self.response_language_combo.currentData()),
+                "ai_provider": normalize_ai_provider(self.ai_provider_combo.currentData()),
+                "fallback_provider": normalize_fallback_provider(self.fallback_provider_combo.currentData()),
+            },
             "security_center": {"base_url": base, "api_url": api_url_from_base(base), "api_key": self.sc_api_key.text().strip(), "timeout": timeout},
             "gemini": {"api_key": self.gemini_api_key.text().strip(), "model": self.gemini_model.text().strip() or DEFAULT_GEMINI_MODEL},
+            "openai": {
+                "api_key": self.openai_api_key.text().strip(),
+                "text_model": self.openai_text_model.text().strip() or DEFAULT_OPENAI_TEXT_MODEL,
+                "vision_model": self.openai_vision_model.text().strip() or DEFAULT_OPENAI_VISION_MODEL,
+                "realtime_model": self.openai_realtime_model.text().strip() or DEFAULT_OPENAI_REALTIME_MODEL,
+                "voice": self.openai_voice.text().strip() or DEFAULT_OPENAI_VOICE,
+            },
         }
 
     def _save(self) -> None:
@@ -269,3 +396,17 @@ class FridaySettingsDialog(QDialog):
         self._test_thread.finished_ok.connect(lambda msg: self.result_box.setPlainText("✅ " + msg))
         self._test_thread.finished_error.connect(lambda msg: self.result_box.setPlainText("❌ " + msg))
         self._test_thread.start()
+
+
+    def _test_openai(self) -> None:
+        self.result_box.setPlainText("OpenAI bağlantısı test ediliyor...")
+        if self._openai_test_thread and self._openai_test_thread.isRunning():
+            return
+        self._openai_test_thread = _OpenAITestThread(
+            self.openai_api_key.text().strip(),
+            self.openai_text_model.text().strip() or DEFAULT_OPENAI_TEXT_MODEL,
+            25,
+        )
+        self._openai_test_thread.finished_ok.connect(lambda msg: self.result_box.setPlainText("✅ " + msg))
+        self._openai_test_thread.finished_error.connect(lambda msg: self.result_box.setPlainText("❌ " + msg))
+        self._openai_test_thread.start()

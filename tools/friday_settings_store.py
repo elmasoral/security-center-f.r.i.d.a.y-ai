@@ -18,6 +18,12 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_VOICE = "Aoede"
 DEFAULT_LANGUAGE = "tr-TR"
 DEFAULT_RESPONSE_LANGUAGE = "tr"
+DEFAULT_AI_PROVIDER = "gemini"
+DEFAULT_FALLBACK_PROVIDER = "openai"
+DEFAULT_OPENAI_TEXT_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_VISION_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime"
+DEFAULT_OPENAI_VOICE = "marin"
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
     {"name": "Aoede", "group": "Kadın", "label": "Aoede · Kadın / soft"},
@@ -43,6 +49,8 @@ DEFAULTS: Dict[str, Any] = {
     },
     "assistant": {
         "response_language": DEFAULT_RESPONSE_LANGUAGE,
+        "ai_provider": DEFAULT_AI_PROVIDER,
+        "fallback_provider": DEFAULT_FALLBACK_PROVIDER,
     },
     "security_center": {
         "base_url": DEFAULT_SECURITY_CENTER_BASE_URL,
@@ -53,6 +61,13 @@ DEFAULTS: Dict[str, Any] = {
     "gemini": {
         "api_key": "",
         "model": DEFAULT_GEMINI_MODEL,
+    },
+    "openai": {
+        "api_key": "",
+        "text_model": DEFAULT_OPENAI_TEXT_MODEL,
+        "vision_model": DEFAULT_OPENAI_VISION_MODEL,
+        "realtime_model": DEFAULT_OPENAI_REALTIME_MODEL,
+        "voice": DEFAULT_OPENAI_VOICE,
     },
 }
 
@@ -106,6 +121,18 @@ def _legacy_to_settings() -> Dict[str, Any]:
         gemini_model = api.get("gemini_model") or api.get("model")
         if gemini_model:
             merged.setdefault("gemini", {})["model"] = str(gemini_model)
+        openai_key = api.get("openai_api_key") or api.get("OPENAI_API_KEY")
+        if openai_key:
+            merged.setdefault("openai", {})["api_key"] = str(openai_key)
+        openai_text_model = api.get("openai_text_model")
+        if openai_text_model:
+            merged.setdefault("openai", {})["text_model"] = str(openai_text_model)
+        openai_vision_model = api.get("openai_vision_model")
+        if openai_vision_model:
+            merged.setdefault("openai", {})["vision_model"] = str(openai_vision_model)
+        ai_provider = api.get("friday_ai_provider")
+        if ai_provider:
+            merged.setdefault("assistant", {})["ai_provider"] = str(ai_provider)
     sc = _read_json(SECURITY_CENTER_PATH)
     if sc:
         base = sc.get("base_url") or sc.get("security_center_base_url")
@@ -136,7 +163,13 @@ def load_settings() -> Dict[str, Any]:
     settings.setdefault("voice", {}).setdefault("language", DEFAULT_LANGUAGE)
     settings.setdefault("assistant", {}).setdefault("response_language", DEFAULT_RESPONSE_LANGUAGE)
     settings["assistant"]["response_language"] = normalize_response_language(settings["assistant"].get("response_language"))
+    settings["assistant"]["ai_provider"] = normalize_ai_provider(settings["assistant"].get("ai_provider"))
+    settings["assistant"]["fallback_provider"] = normalize_fallback_provider(settings["assistant"].get("fallback_provider"))
     settings.setdefault("gemini", {}).setdefault("model", DEFAULT_GEMINI_MODEL)
+    settings.setdefault("openai", {}).setdefault("text_model", DEFAULT_OPENAI_TEXT_MODEL)
+    settings["openai"].setdefault("vision_model", DEFAULT_OPENAI_VISION_MODEL)
+    settings["openai"].setdefault("realtime_model", DEFAULT_OPENAI_REALTIME_MODEL)
+    settings["openai"].setdefault("voice", DEFAULT_OPENAI_VOICE)
     return settings
 
 
@@ -150,6 +183,13 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged.setdefault("assistant", {})["response_language"] = normalize_response_language(
         merged.get("assistant", {}).get("response_language")
     )
+    merged["assistant"]["ai_provider"] = normalize_ai_provider(merged.get("assistant", {}).get("ai_provider"))
+    merged["assistant"]["fallback_provider"] = normalize_fallback_provider(merged.get("assistant", {}).get("fallback_provider"))
+    merged.setdefault("openai", {})
+    merged["openai"].setdefault("text_model", DEFAULT_OPENAI_TEXT_MODEL)
+    merged["openai"].setdefault("vision_model", DEFAULT_OPENAI_VISION_MODEL)
+    merged["openai"].setdefault("realtime_model", DEFAULT_OPENAI_REALTIME_MODEL)
+    merged["openai"].setdefault("voice", DEFAULT_OPENAI_VOICE)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
     _mirror_legacy_files(merged)
@@ -174,6 +214,17 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
         api["GOOGLE_API_KEY"] = str(gemini.get("api_key") or "")
         api["google_api_key"] = str(gemini.get("api_key") or "")
     api["gemini_model"] = str(gemini.get("model") or DEFAULT_GEMINI_MODEL)
+    assistant = settings.get("assistant", {})
+    openai = settings.get("openai", {})
+    api["friday_ai_provider"] = normalize_ai_provider(assistant.get("ai_provider"))
+    api["friday_fallback_provider"] = normalize_fallback_provider(assistant.get("fallback_provider"))
+    if openai.get("api_key"):
+        api["openai_api_key"] = str(openai.get("api_key") or "")
+        api["OPENAI_API_KEY"] = str(openai.get("api_key") or "")
+    api["openai_text_model"] = str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL)
+    api["openai_vision_model"] = str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL)
+    api["openai_realtime_model"] = str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
+    api["openai_voice"] = str(openai.get("voice") or DEFAULT_OPENAI_VOICE)
     API_KEYS_PATH.write_text(json.dumps(api, ensure_ascii=False, indent=2), encoding="utf-8")
     scs = settings.get("security_center", {})
     sec = _read_json(SECURITY_CENTER_PATH)
@@ -182,6 +233,31 @@ def _mirror_legacy_files(settings: Dict[str, Any]) -> None:
     sec["api_key"] = str(scs.get("api_key") or DEFAULT_SECURITY_CENTER_API_KEY)
     sec["timeout"] = int(scs.get("timeout") or 25)
     SECURITY_CENTER_PATH.write_text(json.dumps(sec, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def normalize_ai_provider(value: Any) -> str:
+    raw = str(value or DEFAULT_AI_PROVIDER).strip().lower()
+    aliases = {
+        "google": "gemini",
+        "google_gemini": "gemini",
+        "g": "gemini",
+        "oai": "openai",
+        "open ai": "openai",
+        "open-ai": "openai",
+        "auto/fallback": "auto",
+        "fallback": "auto",
+    }
+    raw = aliases.get(raw, raw)
+    if raw in {"gemini", "openai", "auto"}:
+        return raw
+    return DEFAULT_AI_PROVIDER
+
+
+def normalize_fallback_provider(value: Any) -> str:
+    raw = normalize_ai_provider(value)
+    if raw == "auto":
+        return DEFAULT_FALLBACK_PROVIDER
+    return raw
 
 
 def normalize_response_language(value: Any) -> str:
@@ -222,6 +298,40 @@ def get_friday_response_language_instruction() -> str:
     )
 
 
+def get_friday_ai_provider() -> str:
+    return normalize_ai_provider(load_settings().get("assistant", {}).get("ai_provider"))
+
+
+def get_friday_fallback_provider() -> str:
+    return normalize_fallback_provider(load_settings().get("assistant", {}).get("fallback_provider"))
+
+
+def get_friday_ai_provider_label() -> str:
+    value = get_friday_ai_provider()
+    return {"gemini": "Gemini", "openai": "OpenAI", "auto": "Auto / Fallback"}.get(value, "Gemini")
+
+
+def get_openai_api_key() -> str:
+    value = str(load_settings().get("openai", {}).get("api_key") or "").strip()
+    return value or os.getenv("OPENAI_API_KEY", "")
+
+
+def get_openai_text_model() -> str:
+    return str(load_settings().get("openai", {}).get("text_model") or DEFAULT_OPENAI_TEXT_MODEL)
+
+
+def get_openai_vision_model() -> str:
+    return str(load_settings().get("openai", {}).get("vision_model") or DEFAULT_OPENAI_VISION_MODEL)
+
+
+def get_openai_realtime_model() -> str:
+    return str(load_settings().get("openai", {}).get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
+
+
+def get_openai_voice() -> str:
+    return str(load_settings().get("openai", {}).get("voice") or DEFAULT_OPENAI_VOICE)
+
+
 def get_speech_config() -> Dict[str, Any]:
     return {
         "language_code": get_friday_voice_language(),
@@ -257,6 +367,16 @@ def bootstrap_environment() -> Dict[str, Any]:
         os.environ["FRIDAY_VOICE_NAME"] = voice
     response_language = normalize_response_language(settings.get("assistant", {}).get("response_language"))
     os.environ["FRIDAY_RESPONSE_LANGUAGE"] = response_language
+    assistant = settings.get("assistant", {})
+    os.environ["FRIDAY_AI_PROVIDER"] = normalize_ai_provider(assistant.get("ai_provider"))
+    os.environ["FRIDAY_FALLBACK_PROVIDER"] = normalize_fallback_provider(assistant.get("fallback_provider"))
+    openai = settings.get("openai", {})
+    if str(openai.get("api_key") or "").strip():
+        os.environ["OPENAI_API_KEY"] = str(openai.get("api_key") or "").strip()
+    os.environ["FRIDAY_OPENAI_TEXT_MODEL"] = str(openai.get("text_model") or DEFAULT_OPENAI_TEXT_MODEL)
+    os.environ["FRIDAY_OPENAI_VISION_MODEL"] = str(openai.get("vision_model") or DEFAULT_OPENAI_VISION_MODEL)
+    os.environ["FRIDAY_OPENAI_REALTIME_MODEL"] = str(openai.get("realtime_model") or DEFAULT_OPENAI_REALTIME_MODEL)
+    os.environ["FRIDAY_OPENAI_VOICE"] = str(openai.get("voice") or DEFAULT_OPENAI_VOICE)
     return settings
 
 

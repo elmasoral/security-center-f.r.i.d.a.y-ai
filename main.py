@@ -48,6 +48,9 @@ try:
         get_gemini_model,
         get_friday_response_language,
         get_friday_response_language_instruction,
+        get_friday_ai_provider,
+        get_friday_ai_provider_label,
+        get_openai_api_key,
     )
     FRIDAY_SETTINGS = bootstrap_environment()
     FRIDAY_VOICE_NAME = get_friday_voice_name()
@@ -55,6 +58,8 @@ try:
     FRIDAY_GEMINI_MODEL = get_gemini_model()
     FRIDAY_RESPONSE_LANGUAGE = get_friday_response_language()
     FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = get_friday_response_language_instruction()
+    FRIDAY_AI_PROVIDER = get_friday_ai_provider()
+    FRIDAY_AI_PROVIDER_LABEL = get_friday_ai_provider_label()
 except Exception as _friday_settings_error:
     print(f"[FRIDAY] Settings bridge warning: {_friday_settings_error}")
     FRIDAY_VOICE_NAME = os.environ.get("FRIDAY_VOICE_NAME", "Aoede")
@@ -65,6 +70,8 @@ except Exception as _friday_settings_error:
     FRIDAY_GEMINI_MODEL = os.environ.get("FRIDAY_GEMINI_MODEL") or os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash-native-audio-preview-12-2025"
     FRIDAY_RESPONSE_LANGUAGE = os.environ.get("FRIDAY_RESPONSE_LANGUAGE", "tr")
     FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION = "Her zaman Türkçe cevap ver." if FRIDAY_RESPONSE_LANGUAGE == "tr" else "Always answer in English."
+    FRIDAY_AI_PROVIDER = os.environ.get("FRIDAY_AI_PROVIDER", "gemini")
+    FRIDAY_AI_PROVIDER_LABEL = {"gemini":"Gemini","openai":"OpenAI","auto":"Auto / Fallback"}.get(FRIDAY_AI_PROVIDER, "Gemini")
 # --- /MEDPOV FRIDAY runtime settings bridge ---
 
 
@@ -580,6 +587,13 @@ TOOL_DECLARATIONS = [
     },
 ]
 
+class _OpenAIToolCallShim:
+    def __init__(self, call_id: str, name: str, args: dict):
+        self.id = call_id or "openai_tool_call"
+        self.name = name
+        self.args = args or {}
+
+
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
@@ -604,6 +618,8 @@ class JarvisLive:
         self._last_direct_camera_vision_ts = 0.0
         self._last_direct_camera_vision_text = ""
         self._last_camera_mode_command_ts = 0.0
+        self._openai_voice_pending = False
+        self._last_provider_command_ts = 0.0
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -614,6 +630,80 @@ class JarvisLive:
 
     def _is_model_audio_suppressed(self) -> bool:
         return time.time() < float(getattr(self, "_suppress_model_audio_until", 0.0) or 0.0)
+
+
+    def _command_provider(self) -> str:
+        return str(globals().get("FRIDAY_AI_PROVIDER", "gemini") or "gemini").strip().lower()
+
+    def _use_openai_brain(self) -> bool:
+        return self._command_provider() == "openai"
+
+    def _local_tts(self, text: str) -> None:
+        try:
+            from tools.friday_local_tts import speak_text_async
+            speak_text_async(text, muted=bool(getattr(self.ui, "muted", False)))
+        except Exception as exc:
+            print(f"[FRIDAY] Local TTS skipped: {exc}")
+
+    def _handle_openai_text_command(self, text: str, source: str = "text") -> bool:
+        raw = (text or "").strip()
+        if not raw:
+            return False
+
+        # Avoid duplicate partial/final voice transcripts hitting OpenAI twice.
+        now = time.time()
+        if source.startswith("voice") and now - float(getattr(self, "_last_provider_command_ts", 0.0) or 0.0) < 0.8:
+            return True
+        self._last_provider_command_ts = now
+
+        def _worker():
+            try:
+                self.ui.set_state("THINKING")
+                self.ui.write_log("SYS: OpenAI provider command routing...")
+                from providers.openai_provider import route_command
+                result = route_command(raw, TOOL_DECLARATIONS, system_prompt=(
+                    "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center. "
+                    "Use the declared tools for desktop actions, files, camera, reminders, web, and Security Center. "
+                    "Keep responses concise. " + FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION
+                ))
+                if result.error:
+                    msg = "OpenAI provider error: " + result.error
+                    self.ui.write_log("ERR: " + msg)
+                    self._local_tts(msg)
+                    return
+
+                tool_calls = result.tool_calls or []
+                if tool_calls:
+                    summaries = []
+                    for call in tool_calls[:3]:
+                        shim = _OpenAIToolCallShim(call.id, call.name, call.args)
+                        try:
+                            fr = asyncio.run(self._execute_tool(shim))
+                            payload = getattr(fr, "response", None) or {}
+                            if isinstance(payload, dict):
+                                summaries.append(str(payload.get("result") or "Done."))
+                            else:
+                                summaries.append(str(payload or "Done."))
+                        except Exception as exc:
+                            summaries.append(f"{call.name} failed: {exc}")
+                    spoken = re.sub(r"\s+", " ", " ".join(x for x in summaries if x)).strip() or "İşlem tamamlandı."
+                    self.ui.write_log("FRIDAY: " + spoken)
+                    self._local_tts(spoken)
+                else:
+                    spoken = result.text.strip() or "Komutu anladım."
+                    self.ui.write_log("FRIDAY: " + spoken)
+                    self._local_tts(spoken)
+            except Exception as exc:
+                self.ui.write_log(f"ERR: OpenAI command failed — {exc}")
+                traceback.print_exc()
+            finally:
+                if self.ui.standby:
+                    self.ui.set_state("STANDBY")
+                elif not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+
+        threading.Thread(target=_worker, daemon=True, name="FridayOpenAICommand").start()
+        return True
 
     def _drain_audio_queue(self):
         q = getattr(self, "audio_in_queue", None)
@@ -746,7 +836,7 @@ class JarvisLive:
         threading.Thread(
             target=screen_process,
             kwargs={
-                "parameters": {"angle": "camera", "text": clean_text, "_camera_started": True},
+                "parameters": {"angle": "camera", "text": clean_text, "_camera_started": True, "_speak_callback": self._local_tts},
                 "response": None,
                 "player": self.ui,
                 "session_memory": None,
@@ -819,6 +909,10 @@ class JarvisLive:
             return
         if self._handle_security_center_direct_command(text):
             return
+        if self._use_openai_brain():
+            self._suppress_model_output(6.0)
+            self._handle_openai_text_command(text, source="text")
+            return
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
@@ -881,7 +975,13 @@ class JarvisLive:
             "This rule has priority over the base prompt and over tool/model language drift.\n"
         )
 
-        parts = [time_ctx, lang_ctx]
+        provider_ctx = (
+            "[AI PROVIDER]\n"
+            f"Selected provider: {FRIDAY_AI_PROVIDER_LABEL}. "
+            "If OpenAI is selected, local runtime may route final user commands to OpenAI and suppress duplicate Gemini commentary.\n"
+        )
+
+        parts = [time_ctx, lang_ctx, provider_ctx]
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -987,7 +1087,7 @@ class JarvisLive:
 
                     threading.Thread(
                         target=screen_process,
-                        kwargs={"parameters": args, "response": None,
+                        kwargs={"parameters": {**args, "_speak_callback": self._local_tts}, "response": None,
                                 "player": self.ui, "session_memory": None},
                         daemon=True
                     ).start()
@@ -1239,6 +1339,12 @@ class JarvisLive:
                                         self._voice_local_handled = True
                                         self._suppress_model_output(6.0)
                                         self._start_direct_camera_vision(live_in, source="voice-live")
+                                    elif self._use_openai_brain():
+                                        # Gemini Live is used only as the microphone transcription bridge here;
+                                        # the final command is routed to OpenAI after turn_complete.
+                                        self._voice_local_handled = True
+                                        self._openai_voice_pending = True
+                                        self._suppress_model_output(8.0)
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1247,7 +1353,10 @@ class JarvisLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
-                                if not self._voice_local_handled:
+                                if self._openai_voice_pending:
+                                    self._suppress_model_output(8.0)
+                                    self._handle_openai_text_command(full_in, source="voice")
+                                elif not self._voice_local_handled:
                                     if self._handle_friday_mode_command(full_in, source="voice"):
                                         self._voice_local_handled = True
                                         self._suppress_model_output(4.0)
@@ -1256,6 +1365,7 @@ class JarvisLive:
                                         self._suppress_model_output(6.0)
                                         self._start_direct_camera_vision(full_in, source="voice")
                             in_buf = []
+                            self._openai_voice_pending = False
 
                             full_out = " ".join(out_buf).strip()
                             if full_out and not self._is_model_audio_suppressed() and not self._voice_local_handled:
@@ -1338,7 +1448,7 @@ class JarvisLive:
         while True:
             try:
                 print("[FRIDAY] 🔌 Connecting...")
-                print(f"[FRIDAY] 🎙 Voice loaded: {FRIDAY_VOICE_NAME} | Model: {_live_model_name()}")
+                print(f"[FRIDAY] 🎙 Voice loaded: {FRIDAY_VOICE_NAME} | Model: {_live_model_name()} | Provider: {FRIDAY_AI_PROVIDER_LABEL}")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 

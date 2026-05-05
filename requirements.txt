@@ -1,5 +1,6 @@
 ﻿google-genai
 google-generativeai
+openai>=1.40.0
 PyQt6
 sounddevice
 numpy<2.4

@@ -31,6 +31,9 @@ try:
     from tools.friday_settings_store import (
         get_friday_voice_name,
         get_friday_response_language_instruction,
+        get_friday_ai_provider,
+        get_friday_fallback_provider,
+        get_openai_api_key,
     )
 except Exception:
     def get_friday_voice_name() -> str:
@@ -38,6 +41,12 @@ except Exception:
 
     def get_friday_response_language_instruction() -> str:
         return "Her zaman Türkçe cevap ver."
+    def get_friday_ai_provider() -> str:
+        return "gemini"
+    def get_friday_fallback_provider() -> str:
+        return "openai"
+    def get_openai_api_key() -> str:
+        return ""
 
 try:
     import PIL.Image
@@ -108,6 +117,41 @@ def _vision_language_instruction() -> str:
         return get_friday_response_language_instruction()
     except Exception:
         return "Her zaman Türkçe cevap ver."
+
+
+def _ai_provider() -> str:
+    try:
+        return str(get_friday_ai_provider() or "gemini").lower().strip()
+    except Exception:
+        return "gemini"
+
+
+def _openai_available() -> bool:
+    try:
+        return bool(str(get_openai_api_key() or "").strip())
+    except Exception:
+        return False
+
+
+def _should_use_openai_vision() -> bool:
+    # OpenAI mode uses OpenAI immediately. Auto mode keeps Gemini primary and
+    # falls back to OpenAI only if Gemini vision session cannot start.
+    return _ai_provider() == "openai"
+
+
+def _speak_openai_result(params: dict, player, text: str) -> None:
+    cb = params.get("_speak_callback") if isinstance(params, dict) else None
+    try:
+        if callable(cb):
+            cb(text)
+            return
+    except Exception as exc:
+        print(f"[Vision] ⚠️  speak callback failed: {exc}")
+    try:
+        from tools.friday_local_tts import speak_text_async
+        speak_text_async(text, muted=bool(getattr(player, "muted", False)))
+    except Exception as exc:
+        print(f"[Vision] ⚠️  local TTS skipped: {exc}")
 
 
 def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]:
@@ -569,11 +613,18 @@ def screen_process(
         except Exception:
             pass
 
-    try:
-        _ensure_session(player=player)
-    except Exception as e:
-        print(f"[Vision] ❌ Could not start session: {e}")
-        return False
+    use_openai_vision = _should_use_openai_vision()
+
+    if not use_openai_vision:
+        try:
+            _ensure_session(player=player)
+        except Exception as e:
+            print(f"[Vision] ❌ Could not start Gemini vision session: {e}")
+            if _ai_provider() == "auto" and _openai_available():
+                use_openai_vision = True
+                print("[Vision] ↪ Falling back to OpenAI Vision")
+            else:
+                return False
 
     try:
         if angle == "camera":
@@ -604,6 +655,37 @@ def screen_process(
 
     language_guard = _vision_language_instruction()
     analysis_text = f"{language_guard}\n\nUser request: {user_text}".strip()
+
+    if use_openai_vision:
+        try:
+            if player:
+                player.write_log("SYS: OpenAI Vision analizi başlatıldı.")
+            from providers.openai_provider import analyze_image_bytes
+            result = analyze_image_bytes(image_bytes, mime_type, analysis_text)
+            result = re.sub(r"\s+", " ", str(result or "")).strip()
+            if result:
+                if player:
+                    player.write_log(f"FRIDAY: {result}")
+                print(f"[OpenAI Vision] 💬 {result}")
+                _speak_openai_result(params, player, result)
+                return True
+            raise RuntimeError("OpenAI Vision returned an empty response.")
+        except Exception as exc:
+            print(f"[OpenAI Vision] ❌ {exc}")
+            if _ai_provider() == "openai":
+                try:
+                    if player:
+                        player.write_log("ERR: OpenAI Vision başarısız — " + str(exc)[:180])
+                except Exception:
+                    pass
+                return False
+            # Auto mode: if OpenAI failed, try Gemini as final fallback.
+            try:
+                _ensure_session(player=player)
+            except Exception as gemini_exc:
+                print(f"[Vision] ❌ Gemini fallback also failed: {gemini_exc}")
+                return False
+
     _session.analyze(image_bytes, mime_type, analysis_text)
     return True
 

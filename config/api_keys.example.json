@@ -1,10 +1,18 @@
-﻿{
+{
   "gemini_api_key": "",
   "google_api_key": "",
+  "OPENAI_API_KEY": "",
+  "openai_api_key": "",
+  "friday_ai_provider": "gemini",
+  "friday_fallback_provider": "openai",
   "friday_voice_name": "Aoede",
   "friday_voice_language": "tr-TR",
   "friday_voice_profile": "female_soft",
   "friday_character_gender": "female",
   "friday_response_language": "tr",
-  "gemini_live_model": "gemini-2.5-flash-native-audio-preview-12-2025"
+  "gemini_live_model": "gemini-2.5-flash-native-audio-preview-12-2025",
+  "openai_text_model": "gpt-4.1-mini",
+  "openai_vision_model": "gpt-4.1-mini",
+  "openai_realtime_model": "gpt-realtime",
+  "openai_voice": "marin"
 }

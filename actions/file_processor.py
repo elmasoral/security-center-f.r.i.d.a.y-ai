@@ -25,18 +25,69 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
-import google.generativeai as genai
+try:
+    from google import genai as google_genai
+except Exception:
+    google_genai = None
+
+try:
+    from tools.friday_settings_store import (
+        get_friday_ai_provider,
+        get_gemini_api_key,
+        get_openai_api_key,
+        get_openai_text_model,
+    )
+except Exception:
+    def get_friday_ai_provider() -> str:
+        return "gemini"
+    def get_gemini_api_key() -> str:
+        config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("gemini_api_key", "")
+    def get_openai_api_key() -> str:
+        return os.getenv("OPENAI_API_KEY", "")
+    def get_openai_text_model() -> str:
+        return "gpt-4.1-mini"
 
 
-def _get_api_key() -> str:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+class _AIResponse:
+    def __init__(self, text: str):
+        self.text = text or ""
+
+
+class _GeminiGenAIAdapter:
+    def __init__(self):
+        if google_genai is None:
+            raise RuntimeError("google-genai is not installed.")
+        key = get_gemini_api_key()
+        if not key:
+            raise RuntimeError("Gemini API key is empty.")
+        self.client = google_genai.Client(api_key=key)
+        self.model = "gemini-2.5-flash"
+
+    def generate_content(self, contents):
+        resp = self.client.models.generate_content(model=self.model, contents=contents)
+        return _AIResponse(getattr(resp, "text", "") or "")
+
+
+class _OpenAIAdapter:
+    def generate_content(self, contents):
+        from providers.openai_provider import generate_from_mixed_content
+        return _AIResponse(generate_from_mixed_content(contents, model=get_openai_text_model()))
+
+
+def _ai_client():
+    provider = str(get_friday_ai_provider() or "gemini").lower().strip()
+    if provider == "openai" and str(get_openai_api_key() or "").strip():
+        return _OpenAIAdapter()
+    return _GeminiGenAIAdapter()
 
 
 def _gemini_client():
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel("gemini-2.5-flash")
+    # Backward compatible name used by the older file actions. In v2.7.0 this
+    # returns the selected provider adapter and no longer imports deprecated
+    # google.generativeai at module load time.
+    return _ai_client()
 
 
 def _detect_type(path: Path) -> str:

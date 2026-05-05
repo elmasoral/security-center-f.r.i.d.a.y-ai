@@ -1771,7 +1771,7 @@ class LogWidget(QTextEdit):
         """)
         # Eski sürümde loglar harf harf yazılıyordu. Kamera/voice akışında
         # kuyruk büyüyünce kullanıcı bir önceki konuşmayı geç görüyordu.
-        # v2.6.3: satırı tek seferde basıyoruz; komut geçmişi artık anlık akar.
+        # v2.7.0: satırı tek seferde basıyoruz; komut geçmişi artık anlık akar.
         self._last_text = ""
         self._last_text_ts = 0.0
         self._sig.connect(self._append_now)
@@ -3021,7 +3021,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(_fl("|", C.BORDER_A))
         lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("v2.6.3", C.TEXT_DIM))
+        lay.addWidget(_fl("v2.7.0", C.TEXT_DIM))
         lay.addWidget(_fl("⌁", C.PRI))
         lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
