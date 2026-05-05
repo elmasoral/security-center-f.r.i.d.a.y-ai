@@ -3516,6 +3516,57 @@ except Exception:
     pass
 
 
+_MPV3_BADGE_PIXMAP_CACHE = {}
+
+
+def _mpv3_remove_badge_white_halo(pix: QPixmap, size: int) -> QPixmap:
+    """
+    Security Center badge assetinin icindeki beyaz/pale dis konturlari
+    panel uzerinde beyaz parlama gibi gorunuyordu. Burada sadece cok acik
+    renkli konturlari MEDPOV cyan tonuna ceviriyoruz; arka plan tamamen
+    transparent kalir.
+    """
+    cache_key = (str(BASE_DIR / "assets" / "medpov_security_badge.png"), int(size))
+    cached = _MPV3_BADGE_PIXMAP_CACHE.get(cache_key)
+    if cached is not None and not cached.isNull():
+        return cached
+
+    scaled = pix.scaled(
+        int(size),
+        int(size),
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+    img = scaled.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    accent = QColor(C.PRI)
+
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            a = c.alpha()
+            if a <= 2:
+                continue
+
+            r, g, b = c.red(), c.green(), c.blue()
+
+            # Beyaz anti-alias / dis kontur / pale glow pikselleri.
+            is_white_halo = r >= 210 and g >= 210 and b >= 210
+            is_pale_cyan_white = r >= 185 and g >= 215 and b >= 225
+
+            if is_white_halo or is_pale_cyan_white:
+                c.setRed(accent.red())
+                c.setGreen(accent.green())
+                c.setBlue(accent.blue())
+                # Cok sert parlamasin; hologram hissi kalsin.
+                c.setAlpha(max(55, min(a, 185)))
+                img.setPixelColor(x, y, c)
+
+    cleaned = QPixmap.fromImage(img)
+    _MPV3_BADGE_PIXMAP_CACHE[cache_key] = cleaned
+    return cleaned
+
+
 def _mpv3_make_badge_label(size: int = 104) -> QLabel:
     badge = QLabel()
     badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3525,14 +3576,7 @@ def _mpv3_make_badge_label(size: int = 104) -> QLabel:
         asset = BASE_DIR / "assets" / "medpov_security_badge.png"
         pix = QPixmap(str(asset))
         if not pix.isNull():
-            badge.setPixmap(
-                pix.scaled(
-                    size,
-                    size,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+            badge.setPixmap(_mpv3_remove_badge_white_halo(pix, size))
         else:
             badge.setText("🛡")
             badge.setFont(QFont("Segoe UI Emoji", 34, QFont.Weight.Bold))
@@ -3626,8 +3670,8 @@ def _mpv3_build_security_center_quick_panel(self) -> QWidget:
     badge_wrap.setStyleSheet(f"""
         QFrame#MedpovSecurityBadgeWrap {{
             background: qradialgradient(cx:0.5, cy:0.5, radius:0.78,
-                stop:0 rgba(40, 233, 255, 0.13),
-                stop:0.52 rgba(40, 233, 255, 0.04),
+                stop:0 rgba(40, 233, 255, 0.055),
+                stop:0.55 rgba(40, 233, 255, 0.018),
                 stop:1 rgba(0, 0, 0, 0));
             border: none;
         }}
