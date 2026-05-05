@@ -1215,20 +1215,38 @@ class HudCanvas(QWidget):
     def _draw_mini_friday_core(self, p: QPainter, w: float, h: float):
         pal = self._pal()
         mini_r = max(62.0, min(w, h) * 0.102)
+
+        # Kamera modu acikken FRIDAY core sag alta kuculuyor. Onceki surumde
+        # kucuk core sadece normal donus animasyonunu ciziyordu; SPEAKING
+        # esnasindaki audio ripple / equalizer efekti burada cagrilmadigi icin
+        # konusma aninda halkalar duz donuyor gibi gorunuyordu.
+        if bool(getattr(self, "speaking", False)) and not bool(getattr(self, "muted", False)):
+            mini_r *= 1.0 + 0.018 * math.sin(self._tick * 0.25)
+
         cx = w - mini_r * 1.42
         cy = h - mini_r * 1.30
 
         p.save()
-        halo = QRadialGradient(QPointF(cx, cy), mini_r * 2.20)
-        halo.setColorAt(0.00, self._q(pal["primary"], 92))
-        halo.setColorAt(0.45, self._q(pal["primary"], 30))
+        halo = QRadialGradient(QPointF(cx, cy), mini_r * 2.35)
+        halo_alpha = 92
+        if bool(getattr(self, "speaking", False)) and not bool(getattr(self, "muted", False)):
+            meter = max(0.0, min(1.0, float(getattr(self, "_speech_meter", 0.0))))
+            halo_alpha = 105 + int(meter * 70)
+
+        halo.setColorAt(0.00, self._q(pal["primary"], halo_alpha))
+        halo.setColorAt(0.42, self._q(pal["primary"], 34))
         halo.setColorAt(1.00, self._q("#000000", 0))
+
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(halo))
-        p.drawEllipse(QPointF(cx, cy), mini_r * 2.15, mini_r * 2.15)
+        p.drawEllipse(QPointF(cx, cy), mini_r * 2.20, mini_r * 2.20)
 
         self._draw_outer_rings(p, cx, cy, mini_r)
         self._draw_inner_tech(p, cx, cy, mini_r)
+
+        # Ana hologram kapaliyken hangi konusma efekti varsa,
+        # kamera modundaki mini core uzerinde de aynisini koru.
+        self._draw_speaking_fx(p, cx, cy, mini_r)
 
         p.setPen(self._q("#f5fcff", 235))
         p.setFont(QFont("Arial", max(10, int(mini_r * 0.17)), QFont.Weight.Black))
@@ -1238,13 +1256,15 @@ class HudCanvas(QWidget):
             "F.R.I.D.A.Y",
         )
 
-        p.setPen(self._q(pal["primary"], 180))
+        status_text = "SPEAKING" if bool(getattr(self, "speaking", False)) else "VISION CORE"
+        p.setPen(self._q(pal["primary"], 210 if status_text == "SPEAKING" else 180))
         p.setFont(QFont("Courier New", max(7, int(mini_r * 0.075)), QFont.Weight.Bold))
         p.drawText(
             QRectF(cx - mini_r * 0.85, cy + mini_r * 0.28, mini_r * 1.70, 18),
             Qt.AlignmentFlag.AlignCenter,
-            "VISION CORE",
+            status_text,
         )
+
         p.restore()
 
     def _draw_camera_mode(self, p: QPainter, w: float, h: float):
