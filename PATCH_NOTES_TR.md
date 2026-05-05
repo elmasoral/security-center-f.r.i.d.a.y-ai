@@ -1,3 +1,37 @@
+# MEDPOV F.R.I.D.A.Y v2.6.2 — Kamera Snapshot + Live Reconnect Stabilite Patch
+
+Bu patch v2.6.1 üzerine uygulanır.
+
+## Düzeltilenler
+
+- İlk kamera komutunda görülen `Kamera frame hazır değil` hatası için kısa retry penceresi eklendi.
+- Kamera açma sinyali Qt tarafında asenkron çalıştığı için snapshot artık ilk frame hazır olana kadar güvenli biçimde bekliyor.
+- `screen_process` ve doğrudan kamera yakalayıcı aynı komutta iki kez `start_camera_mode` çağırmıyor.
+- Sağ log panelinde aynı komut zincirinde tekrar eden `CAMERA VISION online` kayıtları azaltıldı.
+- Worker thread içinden doğrudan OpenCV/QImage prime işlemi kaldırıldı; frame üretimi UI thread akışında bırakıldı.
+- Google Live session 1011/1008 hatalarında konsolu dev trace ile doldurmadan daha temiz reconnect yapıyor.
+- Native audio preview modelinde reconnect sonrası 1008 riskini azaltmak için `session_resumption` kaldırıldı.
+- Live reconnect sırasında eski audio queue, eski cevap ve eski vision request temizleniyor.
+- Vision thread geçici hata sonrası ölürse bir sonraki kamera isteğinde yeniden başlatılabiliyor.
+
+## Değişen dosyalar
+
+- `main.py`
+- `ui.py`
+- `actions/screen_processor.py`
+
+## Test komutları
+
+```txt
+Kamerayı açar mısın?
+Şu an elimde ne tutuyorum?
+Tekrar kameraya bak.
+Kamerayı kapatır mısın?
+```
+
+Beklenen sonuç: İlk komutta frame hazır değil hatası vermeden 1-2 saniye içinde cevap üretmesi, yeni komutta eski analizi susturması ve kamera kapatma komutunda eski vision cevabının devam etmemesi.
+
+
 # MEDPOV FRIDAY v2.6.1 Camera + Language Patch
 
 Bu patch v2.6.0 üzerine eklenir.

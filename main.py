@@ -10,6 +10,10 @@ from pathlib import Path
 import sounddevice as sd
 from google import genai
 from google.genai import types
+try:
+    from google.genai import errors as genai_errors
+except Exception:
+    genai_errors = None
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
@@ -621,6 +625,22 @@ class JarvisLive:
         except Exception:
             pass
 
+    def _reset_live_runtime_state(self):
+        """Reset transient queues/state before reconnecting a Live session."""
+        self.session = None
+        self._loop = None
+        self._voice_local_handled = False
+        self._suppress_model_audio_until = 0.0
+        self.set_speaking(False)
+        try:
+            self._drain_audio_queue()
+        except Exception:
+            pass
+        try:
+            cancel_vision_requests()
+        except Exception:
+            pass
+
     def _suppress_model_output(self, seconds: float = 4.0):
         self._suppress_model_audio_until = max(
             float(getattr(self, "_suppress_model_audio_until", 0.0) or 0.0),
@@ -726,7 +746,7 @@ class JarvisLive:
         threading.Thread(
             target=screen_process,
             kwargs={
-                "parameters": {"angle": "camera", "text": clean_text},
+                "parameters": {"angle": "camera", "text": clean_text, "_camera_started": True},
                 "response": None,
                 "player": self.ui,
                 "session_memory": None,
@@ -872,7 +892,8 @@ class JarvisLive:
             input_audio_transcription={},
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            session_resumption=types.SessionResumptionConfig(),
+            # Native audio preview sessions are more stable without session_resumption.
+            # Some reconnects can return 1008 when resumption is requested.
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -910,14 +931,16 @@ class JarvisLive:
             if name == "friday_camera_mode":
                 action = str(args.get("action") or "open").lower().strip()
                 if action in ("close", "off", "stop", "kapat"):
+                    self._suppress_model_output(3.0)
                     cancel_vision_requests()
                     if hasattr(self.ui, "stop_camera_mode"):
                         self.ui.stop_camera_mode()
-                    result = "Camera vision mode closed. Do not add extra commentary."
+                    result = "Camera vision mode closed. Stay silent."
                 else:
+                    self._suppress_model_output(2.0)
                     if hasattr(self.ui, "start_camera_mode"):
                         self.ui.start_camera_mode(camera_index=None)
-                    result = "Camera vision mode opened. Do not add extra commentary."
+                    result = "Camera vision mode opened. Stay silent."
 
             elif name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
@@ -960,6 +983,7 @@ class JarvisLive:
                         cancel_vision_requests()
                         if hasattr(self.ui, "start_camera_mode"):
                             self.ui.start_camera_mode(camera_index=None)
+                        args["_camera_started"] = True
 
                     threading.Thread(
                         target=screen_process,
@@ -1250,7 +1274,12 @@ class JarvisLive:
                         )
         except Exception as e:
             print(f"[FRIDAY] ❌ Recv: {e}")
-            traceback.print_exc()
+            # The Google Live WebSocket may occasionally close with 1011/1008.
+            # Re-raise to let run() reconnect, but avoid flooding the console with
+            # huge nested TaskGroup traces for known transport/API errors.
+            msg = str(e)
+            if "1011" not in msg and "1008" not in msg:
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):
@@ -1343,13 +1372,22 @@ class JarvisLive:
                     tg.create_task(self._play_audio())
                     tg.create_task(self._wake_word_worker())
 
+            except BaseExceptionGroup as eg:
+                # TaskGroup wraps websocket/API failures here. Keep the app alive and reconnect.
+                for exc in eg.exceptions:
+                    msg = str(exc)
+                    print(f"[FRIDAY] ⚠️ Live task stopped: {msg}")
+                    if "1011" not in msg and "1008" not in msg:
+                        traceback.print_exception(type(exc), exc, exc.__traceback__)
             except Exception as e:
-                print(f"[FRIDAY] ⚠️ {e}")
-                traceback.print_exc()
-            self.set_speaking(False)
+                msg = str(e)
+                print(f"[FRIDAY] ⚠️ {msg}")
+                if "1011" not in msg and "1008" not in msg:
+                    traceback.print_exc()
+            self._reset_live_runtime_state()
             self.ui.set_state("THINKING")
-            print("[FRIDAY] 🔄 Reconnecting in 3s...")
-            await asyncio.sleep(3)
+            print("[FRIDAY] 🔄 Reconnecting in 2s...")
+            await asyncio.sleep(2)
 
 def main():
     ui = JarvisUI("face.png")

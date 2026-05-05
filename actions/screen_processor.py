@@ -227,6 +227,45 @@ def _capture_camera() -> tuple[bytes, str]:
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_Q])
     return buf.tobytes(), "image/jpeg"
 
+
+def _capture_ui_camera_snapshot(player, total_wait: float = 2.4) -> tuple[bytes, str]:
+    """
+    Capture the latest JPEG frame produced by the Qt camera HUD.
+
+    The Qt signal that opens the camera is asynchronous; on Windows the first
+    frame may arrive a few hundred ms after start_camera_mode() returns.
+    This helper uses a fast first attempt, then a short retry window so the
+    first user command does not fail with 'Kamera frame hazır değil'.
+    """
+    if player is None or not hasattr(player, "capture_camera_snapshot"):
+        raise RuntimeError("UI camera snapshot bridge is not available")
+
+    last_error: Exception | None = None
+    deadline = time.time() + max(0.35, float(total_wait or 2.4))
+    attempt = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        remaining = max(0.12, deadline - time.time())
+        # First attempt is intentionally very quick. Retries wait a bit longer
+        # only when the camera has just been opened.
+        wait = min(0.38 if attempt == 1 else 0.72, remaining)
+        try:
+            image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=wait)
+            image_bytes, mime_type = _compress(image_bytes, "JPEG")
+            if image_bytes and len(image_bytes) > 1024:
+                if attempt > 1:
+                    print(f"[Vision] ✅ UI camera snapshot became ready on retry #{attempt}")
+                return image_bytes, mime_type
+            last_error = RuntimeError("UI camera snapshot is empty")
+        except Exception as exc:
+            last_error = exc
+            print(f"[Vision] ⏳ UI camera not ready yet ({attempt}): {exc}")
+        time.sleep(0.04)
+
+    raise RuntimeError(str(last_error or "Kamera frame hazır değil"))
+
+
 class _VisionSession:
     def __init__(self):
         self._loop:       Optional[asyncio.AbstractEventLoop] = None
@@ -310,7 +349,14 @@ class _VisionSession:
     def _run_event_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._session_loop())
+        try:
+            self._loop.run_until_complete(self._session_loop())
+        except Exception as exc:
+            # Do not let a temporary Google Live/WebSocket failure kill the
+            # vision worker forever. A later request can start a fresh thread.
+            print(f"[Vision] ❌ Event loop stopped: {exc}")
+        finally:
+            self._ready_evt.clear()
 
     async def _session_loop(self) -> None:
         self._out_queue = asyncio.Queue(maxsize=30)
@@ -356,6 +402,8 @@ class _VisionSession:
             finally:
                 self._session = None
                 self._ready_evt.clear()
+                self._discard_response_until_turn_complete = True
+                await self._drain_queue(self._audio_in)
 
             print(f"[Vision] 🔄 Reconnecting in {backoff:.0f}s...")
             await asyncio.sleep(backoff)
@@ -448,6 +496,11 @@ _session_up   = False
 def _ensure_session(player=None) -> None:
     global _session_up
     with _session_lock:
+        # If the background vision thread died after a transient Live/WebSocket
+        # error, allow the next request to start a clean session.
+        if _session_up and not (_session._thread and _session._thread.is_alive()):
+            _session_up = False
+
         if not _session_up:
             _session.start(player=player)
             _session_up = True
@@ -472,11 +525,15 @@ def screen_process(
 
     print(f"[Vision] ▶ angle={angle!r}  question='{user_text[:80]}'")
 
+    camera_started = bool(params.get("_camera_started"))
+
     # Put the UI into camera mode immediately, before the remote vision session connects.
     # This makes FRIDAY feel instant even on the first analysis.
-    if angle == "camera" and player is not None and hasattr(player, "start_camera_mode"):
+    # When the caller already opened the HUD, avoid emitting a duplicate Qt signal/log.
+    if angle == "camera" and not camera_started and player is not None and hasattr(player, "start_camera_mode"):
         try:
             player.start_camera_mode(camera_index=None)
+            camera_started = True
         except Exception:
             pass
 
@@ -493,15 +550,13 @@ def screen_process(
             if player is not None and hasattr(player, "capture_camera_snapshot"):
                 try:
                     # UI zaten kamerayı açtı; aynı cihazı worker thread içinde tekrar açma.
-                    # İlk frame için biraz daha bekliyoruz. Bu, Windows webcam sürücülerinde
-                    # çift VideoCapture kaynaklı sessiz kapanmaları engeller.
-                    image_bytes, mime_type = player.capture_camera_snapshot(wait_seconds=0.75)
-                    image_bytes, mime_type = _compress(image_bytes, "JPEG")
+                    # İlk deneme hızlıdır; frame henüz hazır değilse kısa bir retry penceresi kullanılır.
+                    image_bytes, mime_type = _capture_ui_camera_snapshot(player, total_wait=2.4)
                     print(f"[Vision] 📷 UI camera snapshot compressed: {len(image_bytes):,} bytes")
                 except Exception as ui_exc:
-                    print(f"[Vision] ❌ UI camera snapshot failed: {ui_exc}")
+                    print(f"[Vision] ❌ UI camera snapshot failed after retry window: {ui_exc}")
                     try:
-                        player.write_log("ERR: Kamera görüntüsü hazırlanamadı. Tekrar 'kameraya bak' demeyi dene.")
+                        player.write_log("ERR: Kamera görüntüsü hazırlanamadı. Kamera açıldıysa 1 saniye sonra tekrar 'kameraya bak' de.")
                     except Exception:
                         pass
                     return False

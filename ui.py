@@ -1138,14 +1138,19 @@ class HudCanvas(QWidget):
             if data:
                 return data, mime
 
-            # Worker thread ilk frame'i çok erken isterse timer henüz çalışmamış olabilir.
-            # UI capture zaten açıksa hızlıca bir frame daha prime etmeyi dene.
-            if self._camera is not None:
-                self._prime_camera_snapshot(max_reads=1)
-
-            time.sleep(0.015)
+            # Kamera Qt tarafında açılıp ilk snapshot üretilene kadar kısa bekle.
+            # Buradan doğrudan cv2/QImage üretmek thread güvenli olmadığı için
+            # frame hazırlama işi UI thread'indeki start/timer akışında kalır.
+            time.sleep(0.02)
 
         raise RuntimeError(self._camera_error or "Kamera frame hazır değil")
+
+    def camera_snapshot_ready(self) -> bool:
+        with self._camera_lock:
+            return bool(self._camera_snapshot_bytes)
+
+    def camera_is_open(self) -> bool:
+        return bool(self.camera_mode and self._camera is not None and not self._camera_error)
 
     def _draw_camera_grid(self, p: QPainter, w: float, h: float):
         pal = self._pal()
@@ -3126,9 +3131,18 @@ class MainWindow(QMainWindow):
         return True
 
     def _start_camera_mode_now(self, camera_index=None):
+        already_online = False
+        try:
+            already_online = self.hud.camera_is_open()
+        except Exception:
+            already_online = False
+
         ok = self.hud.start_camera_mode(camera_index=camera_index)
         if ok:
-            self._log.append_log("SYS: CAMERA VISION online.")
+            # Aynı komut zincirinde start_camera_mode birden fazla çağrılabiliyor.
+            # Kamera zaten açıksa logu tekrar basma; sağ panel temiz kalsın.
+            if not already_online:
+                self._log.append_log("SYS: CAMERA VISION online.")
         else:
             self._log.append_log(f"ERR: Kamera modu açılamadı — {self.hud._camera_error}")
 
@@ -3141,6 +3155,12 @@ class MainWindow(QMainWindow):
 
     def capture_camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
         return self.hud.camera_snapshot(wait_seconds=wait_seconds)
+
+    def camera_snapshot_ready(self) -> bool:
+        try:
+            return self.hud.camera_snapshot_ready()
+        except Exception:
+            return False
 
     def closeEvent(self, event):
         try:
@@ -3347,6 +3367,12 @@ class JarvisUI:
 
     def capture_camera_snapshot(self, wait_seconds: float = 1.0) -> tuple[bytes, str]:
         return self._win.capture_camera_snapshot(wait_seconds=wait_seconds)
+
+    def camera_snapshot_ready(self) -> bool:
+        try:
+            return self._win.camera_snapshot_ready()
+        except Exception:
+            return False
 
 
 # Compatibility alias for the MEDPOV FRIDAY build.
