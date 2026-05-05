@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 import random
@@ -1482,9 +1482,8 @@ class ShieldMark(QWidget):
 
 class MetricBar(QWidget):
     """
-    Compact MEDPOV metric row.
-    v4: Smaller height so CPU / MEMORY / NETWORK / GPU / TEMP fit cleanly
-    inside the SYSTEM STATUS card without clipping.
+    MEDPOV compact readable metric row.
+    v7: Removes unclear symbol glyphs and uses readable CPU/MEM/NET/GPU/TMP chips.
     """
 
     def __init__(self, label: str, color: str = C.PRI, parent=None):
@@ -1493,7 +1492,7 @@ class MetricBar(QWidget):
         self._color = color
         self._value = 0.0
         self._text = "--"
-        self.setFixedHeight(46)
+        self.setFixedHeight(45)
         self.setMinimumWidth(118)
 
     def set_value(self, pct: float, text: str):
@@ -1501,21 +1500,44 @@ class MetricBar(QWidget):
             pct = float(pct)
         except Exception:
             pct = 0.0
+
         self._value = max(0.0, min(100.0, pct))
         self._text = str(text or "--")
         self.update()
 
-    def _icon_text(self) -> str:
-        return {
-            "CPU": "â—†",
-            "MEM": "â–£",
-            "MEMORY": "â–£",
-            "NET": "â—",
-            "NETWORK": "â—",
-            "GPU": "â–¤",
-            "TMP": "â™¨",
-            "TEMP": "â™¨",
-        }.get(self._label, "â€¢")
+    def _chip_text(self) -> str:
+        key = self._label.strip().upper()
+
+        if key in ("CPU", "PROCESSOR"):
+            return "CPU"
+
+        if key in ("MEM", "MEMORY", "RAM"):
+            return "MEM"
+
+        if key in ("NET", "NETWORK"):
+            return "NET"
+
+        if key == "GPU":
+            return "GPU"
+
+        if key in ("TMP", "TEMP", "TEMPERATURE"):
+            return "TMP"
+
+        return key[:3] if key else "SYS"
+
+    def _pretty_label(self) -> str:
+        key = self._label.strip().upper()
+
+        if key == "MEM":
+            return "MEMORY"
+
+        if key == "NET":
+            return "NETWORK"
+
+        if key == "TMP":
+            return "TEMP"
+
+        return key
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -1526,20 +1548,20 @@ class MetricBar(QWidget):
         H = float(self.height())
 
         bg = QLinearGradient(0, 0, W, H)
-        bg.setColorAt(0.00, qcol("#0b2032", 238))
-        bg.setColorAt(0.48, qcol("#071827", 245))
-        bg.setColorAt(1.00, qcol("#040b15", 250))
+        bg.setColorAt(0.00, qcol("#0b2134", 238))
+        bg.setColorAt(0.45, qcol("#071827", 248))
+        bg.setColorAt(1.00, qcol("#030a14", 252))
 
-        p.setPen(QPen(qcol(C.BORDER_A, 178), 1))
+        p.setPen(QPen(qcol(C.BORDER_A, 160), 1))
         p.setBrush(QBrush(bg))
         p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 13, 13)
 
-        # Soft top glow
-        glow = QLinearGradient(0, 1, 0, H * 0.58)
-        glow.setColorAt(0.00, qcol(C.PRI, 28))
-        glow.setColorAt(1.00, qcol(C.PRI, 0))
+        # soft upper light
+        top_glow = QLinearGradient(0, 1, 0, H * 0.58)
+        top_glow.setColorAt(0.00, qcol(C.PRI, 24))
+        top_glow.setColorAt(1.00, qcol(C.PRI, 0))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(glow))
+        p.setBrush(QBrush(top_glow))
         p.drawRoundedRect(QRectF(2, 2, W - 4, H * 0.54), 12, 12)
 
         if self._value > 85:
@@ -1549,57 +1571,76 @@ class MetricBar(QWidget):
         else:
             bar_col = qcol(self._color)
 
-        # Icon chip
-        icon_rect = QRectF(13, 8, 28, 28)
-        chip_grad = QRadialGradient(icon_rect.center(), 22)
-        chip_grad.setColorAt(0.0, qcol(self._color, 105))
-        chip_grad.setColorAt(1.0, qcol("#061421", 235))
+        # readable chip instead of broken symbol icon
+        chip_rect = QRectF(11, 8, 42, 28)
+
+        chip_grad = QLinearGradient(chip_rect.left(), chip_rect.top(), chip_rect.right(), chip_rect.bottom())
+        chip_grad.setColorAt(0.00, qcol(self._color, 82))
+        chip_grad.setColorAt(0.55, qcol("#09263a", 225))
+        chip_grad.setColorAt(1.00, qcol("#04101d", 245))
+
         p.setBrush(QBrush(chip_grad))
-        p.setPen(QPen(qcol(self._color, 145), 1))
-        p.drawRoundedRect(icon_rect, 9, 9)
+        p.setPen(QPen(qcol(self._color, 175), 1))
+        p.drawRoundedRect(chip_rect, 9, 9)
 
-        p.setFont(QFont("Segoe UI Symbol", 9, QFont.Weight.Bold))
-        p.setPen(qcol(self._color, 230))
-        p.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, self._icon_text())
-
-        # Label and value
-        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
-        p.setPen(qcol(C.WHITE, 232))
-        p.drawText(
-            QRectF(52, 7, max(20, W - 118), 14),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            self._label,
+        # tiny chip inner scan line
+        p.setPen(QPen(qcol(self._color, 72), 1))
+        p.drawLine(
+            QPointF(chip_rect.left() + 6, chip_rect.bottom() - 6),
+            QPointF(chip_rect.right() - 6, chip_rect.bottom() - 6),
         )
 
+        p.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+        p.setPen(qcol("#e7fbff", 235))
+        p.drawText(
+            chip_rect,
+            Qt.AlignmentFlag.AlignCenter,
+            self._chip_text(),
+        )
+
+        # label
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+        p.setPen(qcol(C.WHITE, 238))
+        p.drawText(
+            QRectF(62, 7, max(20, W - 154), 15),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self._pretty_label(),
+        )
+
+        # value
         p.setFont(QFont("Segoe UI", 13, QFont.Weight.Black))
         p.setPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM))
         p.drawText(
-            QRectF(W - 94, 5, 78, 18),
+            QRectF(W - 96, 5, 80, 18),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             self._text,
         )
 
-        # Compact progress rail
-        bar_x = 52
+        # progress rail
+        bar_x = 62
         bar_y = H - 14
-        bar_w = max(28, W - 72)
+        bar_w = max(32, W - 84)
         bar_h = 5
         fill_w = int(bar_w * self._value / 100.0)
 
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(qcol("#0b2638", 245)))
+        p.setBrush(QBrush(qcol("#0a2638", 245)))
         p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 3, 3)
 
         if fill_w > 0:
             grad = QLinearGradient(bar_x, bar_y, bar_x + max(1, fill_w), bar_y)
-            grad.setColorAt(0.0, qcol(self._color, 120))
-            grad.setColorAt(1.0, bar_col)
+            grad.setColorAt(0.00, qcol(self._color, 120))
+            grad.setColorAt(0.70, bar_col)
+            grad.setColorAt(1.00, qcol("#ffffff", 185))
             p.setBrush(QBrush(grad))
             p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 3, 3)
 
-        # Right micro status dot
+        # status dot
         p.setBrush(QBrush(bar_col))
         p.drawEllipse(QPointF(W - 16, bar_y + bar_h / 2), 2.0, 2.0)
+
+
+
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
