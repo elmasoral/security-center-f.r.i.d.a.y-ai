@@ -4484,6 +4484,56 @@ def _mp_map_latlng_to_world_px(lat: float, lng: float, z: int) -> QPointF:
     return QPointF(x, y)
 
 
+def _mp_map_norm_lng(lng: float) -> float:
+    lng = float(lng)
+    while lng > 180.0:
+        lng -= 360.0
+    while lng < -180.0:
+        lng += 360.0
+    return lng
+
+
+def _mp_map_world_px_to_latlng(point: QPointF, z: int):
+    scale = _MP_TILE_SIZE * (2 ** int(z))
+    x = float(point.x()) % scale
+    y = max(0.0, min(scale, float(point.y())))
+
+    lng = (x / scale) * 360.0 - 180.0
+    merc = math.pi - (2.0 * math.pi * y / scale)
+    lat = math.degrees(math.atan(math.sinh(merc)))
+    return _mp_map_clip_lat(lat), _mp_map_norm_lng(lng)
+
+
+def _mp_map_widget_rect(self) -> QRectF:
+    return QRectF(18, 24, max(80, float(self.width()) - 36), max(80, float(self.height()) - 48))
+
+
+def _mp_map_event_pos(event) -> QPointF:
+    try:
+        return QPointF(event.position())
+    except Exception:
+        try:
+            return QPointF(event.pos())
+        except Exception:
+            return QPointF(0, 0)
+
+
+def _mp_map_screen_to_latlng(self, pos: QPointF, rect: QRectF):
+    try:
+        z = _mp_map_tile_zoom(self)
+        center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+        center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+
+        world_px = QPointF(
+            center_px.x() + (float(pos.x()) - rect.center().x()),
+            center_px.y() + (float(pos.y()) - rect.center().y()),
+        )
+
+        return _mp_map_world_px_to_latlng(world_px, z)
+    except Exception:
+        return None
+
+
 def _mp_map_tile_path(z: int, x: int, y: int) -> Path:
     return _MP_TILE_CACHE_DIR / str(int(z)) / str(int(x)) / f"{int(y)}.png"
 
