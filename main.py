@@ -241,6 +241,9 @@ TOOL_DECLARATIONS = [
             "'buna bak', 'kameraya bak', or any visual question about the real world. "
             "Use angle='camera' for webcam/hand/object/room/user questions. "
             "Use angle='screen' only for desktop/screen questions. "
+            "DO NOT call this tool for audio/hearing/microphone checks such as "
+            "'sesim geliyor mu', 'beni duyuyor musun', 'can you hear me', "
+            "'is my voice clear', or assistant voice quality questions. Those are audio-only checks. "
             "You have NO visual ability without this tool. "
             "After calling this tool, stay SILENT — the vision module speaks directly."
         ),
@@ -813,6 +816,8 @@ class JarvisLive:
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
             "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
             "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
+            "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
+            "If the user asks to evaluate FRIDAY's voice, microphone, speaker, or sound quality, do not use the camera; answer briefly or ask for an audio-specific detail.",
             "Never invent camera observations. Only describe the camera/screen after screen_process returns a result.",
             "When a tool returns a direct result, summarize it in a short human sentence.",
             f"Current date/time: {now}.",
@@ -1066,7 +1071,15 @@ class JarvisLive:
 
         if name == "screen_process":
             angle = str((args or {}).get("angle") or "screen").lower().strip()
+            tool_text = str((args or {}).get("text") or "")
             if angle == "camera":
+                # Hard safety gate: the model sometimes confuses hearing/audio
+                # checks with visual checks. Do not let those calls open the camera.
+                if self._looks_like_audio_status_request(tool_text):
+                    return (
+                        "Bu istek kamera/görüntü analizi gerektirmiyor; bu bir ses, mikrofon veya duyma kontrolü. "
+                        "Kamerayı açma. Kullanıcıya sesini duyduğunu veya ses konusundaki durumu kısa ve doğal şekilde söyle."
+                    )
                 turn_id = int(getattr(self, "_openai_user_turn_id", 0) or 0)
                 if int(getattr(self, "_openai_camera_turn_id", -1) or -1) == turn_id:
                     last = str(getattr(self, "_openai_last_camera_result", "") or "Görüntü analizi bu turda zaten yapıldı.")
@@ -1762,10 +1775,33 @@ class JarvisLive:
             return "open"
         return None
 
+    def _looks_like_audio_status_request(self, text: str) -> bool:
+        """True for hearing/microphone/speaker checks that must never open camera."""
+        t = self._norm_text(text)
+        if not t:
+            return False
+        audio_phrases = (
+            "sesim geliyor mu", "sesimi duyuyor musun", "beni duyuyor musun",
+            "sesimi aliyor musun", "sesimi alıyor musun", "ses geliyor mu",
+            "sesin geliyor mu", "sesini duyuyor musun", "ses net mi",
+            "sesim net mi", "mikrofon", "microphone", "mic",
+            "duyuyor musun", "duyabiliyor musun", "beni duyabiliyor musun",
+            "can you hear me", "do you hear me", "is my voice clear",
+            "voice clear", "audio check", "sound check", "hear my voice",
+            "asistanin sesini", "asistanın sesini", "sesini degerlendir",
+            "sesini değerlendir", "ses kalitesi", "hoparlor", "hoparlör"
+        )
+        return any(p in t for p in audio_phrases)
+
     def _looks_like_camera_vision_request(self, text: str) -> bool:
         """Detect visual real-world questions before Gemini produces a wrong normal answer."""
         t = self._norm_text(text)
         if not t:
+            return False
+
+        # Audio/hearing checks are not visual questions. OpenAI Realtime can
+        # hear the user without using the camera.
+        if self._looks_like_audio_status_request(text):
             return False
 
         # Screen-specific questions must stay in normal tool flow / angle=screen.
