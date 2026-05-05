@@ -3836,3 +3836,293 @@ except Exception:
 
 
 
+# === MEDPOV FRIDAY UI V4 RESPONSIVE CENTER CORE FIX ===
+# Amaç:
+# - Pencere daralınca FRIDAY çemberinin sağa taşmasını engeller.
+# - Sol paneli dar ekranda otomatik gizler.
+# - Sağ paneli kademeli küçültür.
+# - Orta HUD çok dar kalırsa dikdörtgen "Command Core" moduna geçer.
+# - Kamera modunu bozmaz.
+
+try:
+    _MPV4_ORIGINAL_MAIN_INIT = MainWindow.__init__
+    _MPV4_ORIGINAL_MAIN_RESIZE = MainWindow.resizeEvent
+    _MPV4_ORIGINAL_HUD_PAINT = HudCanvas.paintEvent
+except Exception:
+    _MPV4_ORIGINAL_MAIN_INIT = None
+    _MPV4_ORIGINAL_MAIN_RESIZE = None
+    _MPV4_ORIGINAL_HUD_PAINT = None
+
+
+def _mpv4_hud_set_compact_core(self, enabled: bool):
+    self._mpv4_compact_core = bool(enabled)
+    try:
+        self.update()
+    except Exception:
+        pass
+
+
+def _mpv4_draw_responsive_command_core(self, p: QPainter, w: float, h: float):
+    pal = self._pal()
+
+    cx = w / 2.0
+    cy = h / 2.0
+
+    self._draw_background(p, w, h, cx, cy)
+
+    panel_w = max(300.0, min(w - 36.0, 760.0))
+    panel_h = max(260.0, min(h * 0.68, 430.0))
+
+    panel = QRectF(
+        (w - panel_w) / 2.0,
+        (h - panel_h) / 2.0,
+        panel_w,
+        panel_h,
+    )
+
+    p.save()
+
+    glow = QRadialGradient(QPointF(panel.center().x(), panel.center().y()), panel_w * 0.72)
+    glow.setColorAt(0.00, self._q(pal["primary"], 76))
+    glow.setColorAt(0.42, self._q(pal["primary"], 26))
+    glow.setColorAt(1.00, self._q("#000000", 0))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(glow))
+    p.drawRoundedRect(panel.adjusted(-38, -42, 38, 42), 34, 34)
+
+    base_grad = QLinearGradient(panel.left(), panel.top(), panel.right(), panel.bottom())
+    base_grad.setColorAt(0.00, self._q("#04111e", 238))
+    base_grad.setColorAt(0.45, self._q("#061827", 230))
+    base_grad.setColorAt(1.00, self._q("#020711", 248))
+
+    p.setPen(QPen(self._q(pal["primary"], 150), 1.4))
+    p.setBrush(QBrush(base_grad))
+    p.drawRoundedRect(panel, 24, 24)
+
+    inner = panel.adjusted(18, 18, -18, -18)
+    p.setPen(QPen(self._q(pal["primary"], 54), 1))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(inner, 18, 18)
+
+    scan_x = inner.left() + ((self._tick * 2.2) % max(1, int(inner.width())))
+    scan = QLinearGradient(scan_x, inner.top(), scan_x, inner.bottom())
+    scan.setColorAt(0.00, self._q(pal["primary"], 0))
+    scan.setColorAt(0.50, self._q(pal["primary"], 105))
+    scan.setColorAt(1.00, self._q(pal["primary"], 0))
+    p.setPen(QPen(QBrush(scan), 2))
+    p.drawLine(QPointF(scan_x, inner.top() + 8), QPointF(scan_x, inner.bottom() - 8))
+
+    title_size = max(24, min(48, int(panel_w * 0.075)))
+    p.setFont(QFont("Segoe UI", title_size, QFont.Weight.Black))
+    p.setPen(self._q("#f5fcff", 235))
+    p.drawText(
+        QRectF(inner.left(), inner.top() + inner.height() * 0.28, inner.width(), 58),
+        Qt.AlignmentFlag.AlignCenter,
+        "F.R.I.D.A.Y",
+    )
+
+    p.setFont(QFont("Segoe UI", max(7, int(panel_w * 0.013)), QFont.Weight.Black))
+    p.setPen(self._q(pal["primary"], 190))
+    p.drawText(
+        QRectF(inner.left(), inner.top() + inner.height() * 0.43, inner.width(), 22),
+        Qt.AlignmentFlag.AlignCenter,
+        "MEDPOV RESPONSIVE COMMAND CORE",
+    )
+
+    status_text = "SPEAKING" if bool(getattr(self, "speaking", False)) else pal["label"]
+    p.setFont(QFont("Courier New", max(8, int(panel_w * 0.015)), QFont.Weight.Bold))
+    p.setPen(self._q(pal["label_color"], 220))
+    p.drawText(
+        QRectF(inner.left(), inner.bottom() - 44, inner.width(), 28),
+        Qt.AlignmentFlag.AlignCenter,
+        f"◎ {status_text}",
+    )
+
+    # Üst ve alt data rail çizgileri
+    rail_y_top = inner.top() + 22
+    rail_y_bot = inner.bottom() - 22
+
+    rail_grad = QLinearGradient(inner.left(), rail_y_top, inner.right(), rail_y_top)
+    rail_grad.setColorAt(0.00, self._q(pal["primary"], 0))
+    rail_grad.setColorAt(0.18, self._q(pal["primary"], 160))
+    rail_grad.setColorAt(0.50, self._q(pal["secondary"], 230))
+    rail_grad.setColorAt(0.82, self._q(pal["primary"], 160))
+    rail_grad.setColorAt(1.00, self._q(pal["primary"], 0))
+
+    p.setPen(QPen(QBrush(rail_grad), 3))
+    p.drawLine(QPointF(inner.left() + 24, rail_y_top), QPointF(inner.right() - 24, rail_y_top))
+    p.drawLine(QPointF(inner.left() + 24, rail_y_bot), QPointF(inner.right() - 24, rail_y_bot))
+
+    # Ses / activity barları
+    bar_count = 42
+    bar_area_w = inner.width() * 0.78
+    start_x = inner.center().x() - bar_area_w / 2.0
+    base_y = inner.bottom() - 82
+
+    meter = float(getattr(self, "_speech_meter", 0.0) or 0.0)
+    if not bool(getattr(self, "speaking", False)):
+        meter = max(meter, 0.18 + self._pulse * 0.18)
+
+    for i in range(bar_count):
+        phase = self._tick * 0.14 + i * 0.55
+        amp = 0.28 + 0.72 * ((math.sin(phase) + 1.0) * 0.5)
+        bar_h = 8 + amp * meter * 44
+        x = start_x + i * (bar_area_w / max(1, bar_count - 1))
+        alpha = 70 + int(amp * 130)
+        p.setPen(QPen(self._q(pal["primary"], alpha), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(x, base_y), QPointF(x, base_y - bar_h))
+
+    # Sol / sağ teknik köşe blokları
+    p.setPen(QPen(self._q(pal["primary"], 120), 2))
+    corner = 42
+    p.drawLine(QPointF(panel.left() + 18, panel.top() + 18), QPointF(panel.left() + corner, panel.top() + 18))
+    p.drawLine(QPointF(panel.left() + 18, panel.top() + 18), QPointF(panel.left() + 18, panel.top() + corner))
+
+    p.drawLine(QPointF(panel.right() - 18, panel.top() + 18), QPointF(panel.right() - corner, panel.top() + 18))
+    p.drawLine(QPointF(panel.right() - 18, panel.top() + 18), QPointF(panel.right() - 18, panel.top() + corner))
+
+    p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 18), QPointF(panel.left() + corner, panel.bottom() - 18))
+    p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 18), QPointF(panel.left() + 18, panel.bottom() - corner))
+
+    p.drawLine(QPointF(panel.right() - 18, panel.bottom() - 18), QPointF(panel.right() - corner, panel.bottom() - 18))
+    p.drawLine(QPointF(panel.right() - 18, panel.bottom() - 18), QPointF(panel.right() - 18, panel.bottom() - corner))
+
+    # Minik teknik etiketler
+    p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+    p.setPen(self._q(pal["soft"], 95))
+    p.drawText(QRectF(panel.left() + 24, panel.top() + 42, 180, 20), Qt.AlignmentFlag.AlignLeft, "CORE MODE // RESPONSIVE")
+    p.drawText(QRectF(panel.right() - 210, panel.top() + 42, 186, 20), Qt.AlignmentFlag.AlignRight, "NO OVERFLOW // ACTIVE")
+
+    p.restore()
+
+
+def _mpv4_hud_paint_event(self, event):
+    try:
+        w = float(self.width())
+        h = float(self.height())
+
+        compact_forced = bool(getattr(self, "_mpv4_compact_core", False))
+        compact_auto = (not bool(getattr(self, "camera_mode", False))) and (
+            w < 560 or (w / max(1.0, h)) < 0.62
+        )
+
+        if compact_forced or compact_auto:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            _mpv4_draw_responsive_command_core(self, p, w, h)
+            p.end()
+            return
+    except Exception:
+        pass
+
+    if _MPV4_ORIGINAL_HUD_PAINT:
+        return _MPV4_ORIGINAL_HUD_PAINT(self, event)
+
+
+def _mpv4_apply_responsive_layout(self):
+    try:
+        win_w = int(self.width())
+
+        # Normal geniş ekran
+        if win_w >= 1550:
+            left_visible = True
+            left_w = _LEFT_W
+            right_w = _RIGHT_W
+            hud_min_w = 520
+            force_compact_core = False
+
+        # Orta genişlik
+        elif win_w >= 1320:
+            left_visible = True
+            left_w = 290
+            right_w = 410
+            hud_min_w = 460
+            force_compact_core = False
+
+        # Dar ekran: sol panel gizlenir, sağ panel korunur
+        elif win_w >= 1120:
+            left_visible = False
+            left_w = 0
+            right_w = 390
+            hud_min_w = 500
+            force_compact_core = False
+
+        # Çok dar ekran: sağ panel küçülür, HUD dikdörtgen moda geçer
+        else:
+            left_visible = False
+            left_w = 0
+            right_w = 345
+            hud_min_w = 360
+            force_compact_core = True
+
+        if hasattr(self, "_left_panel") and self._left_panel:
+            self._left_panel.setVisible(left_visible)
+            if left_visible:
+                self._left_panel.setFixedWidth(left_w)
+
+        if hasattr(self, "_right_panel") and self._right_panel:
+            self._right_panel.setVisible(True)
+            self._right_panel.setFixedWidth(right_w)
+
+        if hasattr(self, "hud") and self.hud:
+            self.hud.setMinimumWidth(hud_min_w)
+            self.hud.setMinimumHeight(360)
+            if hasattr(self.hud, "set_compact_core"):
+                self.hud.set_compact_core(force_compact_core)
+
+        # Pencere daralınca minimumu biraz gevşet.
+        # Böylece Windows pencereyi sıkıştırırken layout boğulmaz.
+        if win_w < 1120:
+            self.setMinimumSize(960, 640)
+        else:
+            self.setMinimumSize(_MIN_W, _MIN_H)
+
+    except Exception as exc:
+        try:
+            print("[FRIDAY UI] responsive layout error:", exc)
+        except Exception:
+            pass
+
+
+def _mpv4_main_resize_event(self, event):
+    if _MPV4_ORIGINAL_MAIN_RESIZE:
+        _MPV4_ORIGINAL_MAIN_RESIZE(self, event)
+    else:
+        try:
+            super(MainWindow, self).resizeEvent(event)
+        except Exception:
+            pass
+
+    try:
+        self._apply_responsive_layout()
+    except Exception:
+        pass
+
+
+def _mpv4_main_init(self, *args, **kwargs):
+    if _MPV4_ORIGINAL_MAIN_INIT:
+        _MPV4_ORIGINAL_MAIN_INIT(self, *args, **kwargs)
+
+    try:
+        QTimer.singleShot(0, self._apply_responsive_layout)
+        QTimer.singleShot(250, self._apply_responsive_layout)
+    except Exception:
+        pass
+
+
+try:
+    HudCanvas.set_compact_core = _mpv4_hud_set_compact_core
+    HudCanvas.paintEvent = _mpv4_hud_paint_event
+
+    MainWindow._apply_responsive_layout = _mpv4_apply_responsive_layout
+    MainWindow.resizeEvent = _mpv4_main_resize_event
+    MainWindow.__init__ = _mpv4_main_init
+except Exception as _mpv4_patch_error:
+    try:
+        print("[FRIDAY UI] responsive patch install error:", _mpv4_patch_error)
+    except Exception:
+        pass
+
+# === /MEDPOV FRIDAY UI V4 RESPONSIVE CENTER CORE FIX ===
