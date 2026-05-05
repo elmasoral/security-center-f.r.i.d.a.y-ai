@@ -3370,6 +3370,21 @@ class MainWindow(QMainWindow):
         return True
 
     def _start_camera_mode_now(self, camera_index=None):
+        """
+        Start camera view from the UI thread and make it win over the Security Map.
+        Left-panel quick buttons stay in place; this only switches the main HUD.
+        """
+        # If the global map is open, close it before starting camera.
+        # The V6 map paint hook can otherwise keep drawing the map over the live camera.
+        try:
+            if hasattr(self.hud, "security_map_is_open") and self.hud.security_map_is_open():
+                self.hud.stop_security_map_mode()
+        except Exception:
+            try:
+                self.hud.security_map_mode = False
+            except Exception:
+                pass
+
         already_online = False
         try:
             already_online = self.hud.camera_is_open()
@@ -3378,6 +3393,7 @@ class MainWindow(QMainWindow):
 
         ok = self.hud.start_camera_mode(camera_index=camera_index)
         if ok:
+            self._apply_state("CAMERA")
             # Aynı komut zincirinde start_camera_mode birden fazla çağrılabiliyor.
             # Kamera zaten açıksa logu tekrar basma; sağ panel temiz kalsın.
             if not already_online:
@@ -5343,7 +5359,7 @@ _MPV6_ORIGINAL_HUD_WHEEL = getattr(HudCanvas, "wheelEvent", None)
 
 
 def _mpv6_hud_mouse_press_event(self, event):
-    if bool(getattr(self, "security_map_mode", False)):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)):
         pos = _mp_map_event_pos(event)
         rect = _mp_map_widget_rect(self)
         if rect.contains(pos) and event.button() == Qt.MouseButton.LeftButton:
@@ -5362,7 +5378,7 @@ def _mpv6_hud_mouse_press_event(self, event):
 
 
 def _mpv6_hud_mouse_move_event(self, event):
-    if bool(getattr(self, "security_map_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
         pos = _mp_map_event_pos(event)
         last = getattr(self, "_security_map_drag_last", None)
         if last is not None:
@@ -5389,7 +5405,7 @@ def _mpv6_hud_mouse_move_event(self, event):
 
 
 def _mpv6_hud_mouse_release_event(self, event):
-    if bool(getattr(self, "security_map_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
         self._security_map_dragging = False
         self._security_map_drag_last = None
         try:
@@ -5404,7 +5420,7 @@ def _mpv6_hud_mouse_release_event(self, event):
 
 
 def _mpv6_hud_mouse_double_click_event(self, event):
-    if bool(getattr(self, "security_map_mode", False)):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)):
         pos = _mp_map_event_pos(event)
         rect = _mp_map_widget_rect(self)
         if rect.contains(pos):
@@ -5423,7 +5439,7 @@ def _mpv6_hud_mouse_double_click_event(self, event):
 
 
 def _mpv6_hud_wheel_event(self, event):
-    if bool(getattr(self, "security_map_mode", False)):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)):
         pos = _mp_map_event_pos(event)
         rect = _mp_map_widget_rect(self)
         if rect.contains(pos):
@@ -5459,6 +5475,13 @@ def _mpv6_hud_wheel_event(self, event):
 
 
 def _mpv6_hud_paint_event(self, event):
+    # Camera must have priority over the Security Map. When map mode remains true
+    # from a previous view, drawing the map first hides the live camera even though
+    # the camera backend is already online.
+    if bool(getattr(self, "camera_mode", False)):
+        if _MPV6_ORIGINAL_HUD_PAINT:
+            return _MPV6_ORIGINAL_HUD_PAINT(self, event)
+
     if bool(getattr(self, "security_map_mode", False)):
         p = QPainter(self)
         _mp_map_draw(self, p, float(self.width()), float(self.height()))
