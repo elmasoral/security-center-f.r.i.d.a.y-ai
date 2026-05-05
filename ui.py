@@ -40,7 +40,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
 
 
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget, QProgressBar,
 )
@@ -3256,4 +3256,5 @@ except NameError:
     except NameError:
         pass
 # --- /MEDPOV FRIDAY settings panel bridge ---
+
 
