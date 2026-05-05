@@ -2186,11 +2186,12 @@ class JarvisLive:
 
         # If the map is open, a known city/place phrase can directly focus it.
         known_places = (
+            "turkiye", "türkiye", "turkey", "ankara", "izmir", "bursa", "antalya",
             "londra", "london", "istanbul", "new york", "tokyo", "tokio", "paris", "berlin", "dubai",
             "singapore", "sydney", "moscow", "moskova", "cairo", "kahire", "toronto", "amsterdam",
             "frankfurt", "los angeles", "san francisco", "hong kong", "mumbai", "delhi", "sao paulo",
         )
-        if map_open or any(w in t for w in ("zoom", "odaklan", "haritada", "mapte")):
+        if map_open or any(w in t for w in ("zoom", "odaklan", "odakla", "merkezle", "merkeze al", "center", "haritada", "mapte")):
             for place in known_places:
                 if place in t:
                     return {"action": "map_zoom", "focus": place, "text": raw}

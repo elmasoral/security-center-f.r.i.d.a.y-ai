@@ -1280,7 +1280,12 @@ class HudCanvas(QWidget):
             "F.R.I.D.A.Y",
         )
 
-        status_text = "SPEAKING" if bool(getattr(self, "speaking", False)) else "VISION CORE"
+        if bool(getattr(self, "speaking", False)):
+            status_text = "SPEAKING"
+        elif str(getattr(self, "state", "") or "").upper().strip() == "MAP":
+            status_text = "SECURITY MAP"
+        else:
+            status_text = "VISION CORE"
         p.setPen(self._q(pal["primary"], 210 if status_text == "SPEAKING" else 180))
         p.setFont(QFont("Courier New", max(7, int(mini_r * 0.075)), QFont.Weight.Bold))
         p.drawText(
@@ -4389,6 +4394,10 @@ except Exception as _mpv5_settings_patch_error:
 # Large AI-grade world map mode for Security Center map-intelligence data.
 
 _MP_MAP_PLACES = {
+    "turkiye": (39.0000, 35.0000, "Türkiye"), "turkey": (39.0000, 35.0000, "Türkiye"),
+    "turkiye merkez": (39.0000, 35.0000, "Türkiye"), "turkey center": (39.0000, 35.0000, "Türkiye"),
+    "ankara": (39.9334, 32.8597, "Ankara"), "izmir": (38.4237, 27.1428, "Izmir"),
+    "bursa": (40.1828, 29.0665, "Bursa"), "antalya": (36.8969, 30.7133, "Antalya"),
     "london": (51.5072, -0.1276, "London"), "londra": (51.5072, -0.1276, "London"),
     "istanbul": (41.0082, 28.9784, "Istanbul"), "istanbul ac": (41.0082, 28.9784, "Istanbul"),
     "new york": (40.7128, -74.0060, "New York"), "newyork": (40.7128, -74.0060, "New York"),
@@ -4607,6 +4616,10 @@ def _mp_map_init(self):
         self._security_map_focus_label = "World"
     if not hasattr(self, "_security_map_notice"):
         self._security_map_notice = "World intelligence map ready."
+    if not hasattr(self, "_security_map_dragging"):
+        self._security_map_dragging = False
+    if not hasattr(self, "_security_map_drag_last"):
+        self._security_map_drag_last = None
 
 
 def _mp_map_find_place(place: str):
@@ -4678,7 +4691,7 @@ def _mp_map_focus(self, place: str):
     self.camera_mode = False
     self.state = "MAP"
     self._security_map_center = (float(lat), float(lng))
-    self._security_map_zoom = 5.2
+    self._security_map_zoom = 4.2 if str(label).lower() in {"türkiye", "turkiye", "turkey"} else 5.2
     self._security_map_focus_label = label
     self._security_map_notice = f"Focused on {label}."
     self.update()
@@ -4785,40 +4798,61 @@ def _mp_map_extract_traces(self, kind: str):
 
 
 def _mp_map_draw_trace(self, p: QPainter, rect: QRectF, trace: dict, kind: str):
-    style = trace.get("style") or {}
-    color = style.get("color") or (C.GREEN if kind == "live" else C.ACC)
-    opacity = int(225 * float(style.get("opacity", .78) or .78))
-    width = float(style.get("weight", 2) or 2)
-    p.setPen(QPen(qcol(str(color), opacity), max(1.2, width), Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap))
-    curve_points = trace.get("curve_points") or []
-    path = QPainterPath()
-    has_path = False
-    if isinstance(curve_points, list) and len(curve_points) >= 2:
-        for idx, pair in enumerate(curve_points):
+    """Draw a Security Center trace, clipped strictly inside the map rectangle."""
+    p.save()
+    p.setClipRect(rect.adjusted(1, 1, -1, -1))
+
+    try:
+        style = trace.get("style") or {}
+        color = style.get("color") or (C.GREEN if kind == "live" else C.ACC)
+        opacity = int(225 * float(style.get("opacity", .78) or .78))
+        width = float(style.get("weight", 2) or 2)
+
+        pen = QPen(
+            qcol(str(color), opacity),
+            max(1.2, width),
+            Qt.PenStyle.DashLine,
+            Qt.PenCapStyle.RoundCap,
+        )
+        p.setPen(pen)
+
+        curve_points = trace.get("curve_points") or []
+        path = QPainterPath()
+        has_path = False
+
+        if isinstance(curve_points, list) and len(curve_points) >= 2:
+            for idx, pair in enumerate(curve_points):
+                try:
+                    lat, lng = float(pair[0]), float(pair[1])
+                except Exception:
+                    continue
+
+                pt = _mp_map_project(self, lat, lng, rect)
+                if idx == 0:
+                    path.moveTo(pt)
+                else:
+                    path.lineTo(pt)
+                has_path = True
+        else:
+            src = trace.get("from") or {}
+            dst = trace.get("to") or {}
             try:
-                lat, lng = float(pair[0]), float(pair[1])
+                p1 = _mp_map_project(self, float(src.get("lat")), float(src.get("lng")), rect)
+                p2 = _mp_map_project(self, float(dst.get("lat")), float(dst.get("lng")), rect)
+                mid = QPointF(
+                    (p1.x() + p2.x()) / 2,
+                    (p1.y() + p2.y()) / 2 - abs(p2.x() - p1.x()) * 0.16,
+                )
+                path.moveTo(p1)
+                path.quadTo(mid, p2)
+                has_path = True
             except Exception:
-                continue
-            pt = _mp_map_project(self, lat, lng, rect)
-            if idx == 0:
-                path.moveTo(pt)
-            else:
-                path.lineTo(pt)
-            has_path = True
-    else:
-        src = trace.get("from") or {}
-        dst = trace.get("to") or {}
-        try:
-            p1 = _mp_map_project(self, float(src.get("lat")), float(src.get("lng")), rect)
-            p2 = _mp_map_project(self, float(dst.get("lat")), float(dst.get("lng")), rect)
-            mid = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2 - abs(p2.x() - p1.x()) * 0.16)
-            path.moveTo(p1)
-            path.quadTo(mid, p2)
-            has_path = True
-        except Exception:
-            has_path = False
-    if has_path:
-        p.drawPath(path)
+                has_path = False
+
+        if has_path:
+            p.drawPath(path)
+    finally:
+        p.restore()
 
 
 def _mp_map_draw_point(self, p: QPainter, rect: QRectF, item: dict, kind: str, index: int):
@@ -4944,9 +4978,15 @@ def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
         p.drawText(QRectF(leg.left() + 31, yy - 2, 120, 18), Qt.AlignmentFlag.AlignLeft, label)
         yy += 22
 
-    # Bottom right status pill.
-    pill_w = 420 if mode == "BOTH" else 340
-    pill = QRectF(rect.right() - pill_w - 18, rect.bottom() - 54, pill_w, 34)
+    # Bottom status pill. It is moved left so the mini FRIDAY hologram can sit at bottom-right.
+    mini_reserve = max(230.0, min(float(w), float(h)) * 0.30)
+    desired_w = 420 if mode == "BOTH" else 340
+    max_w = max(260.0, rect.width() - 240.0 - mini_reserve)
+    pill_w = min(float(desired_w), max_w)
+    pill_x = rect.right() - mini_reserve - pill_w - 18
+    pill_x = max(rect.left() + 206, pill_x)
+    pill = QRectF(pill_x, rect.bottom() - 54, pill_w, 34)
+
     p.setPen(QPen(qcol(C.PRI, 82), 1))
     p.setBrush(QBrush(qcol("#061421", 226)))
     p.drawRoundedRect(pill, 13, 13)
@@ -4964,6 +5004,7 @@ def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
 def _mp_map_draw(self, p: QPainter, w: float, h: float):
     _mp_map_init(self)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
     bg = QRadialGradient(QPointF(w * .52, h * .48), max(w, h) * .76)
     bg.setColorAt(0, qcol("#071b24", 255))
     bg.setColorAt(.48, qcol("#06101a", 255))
@@ -4972,21 +5013,36 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
     p.setBrush(QBrush(bg))
     p.drawRect(0, 0, int(w), int(h))
 
-    rect = QRectF(18, 24, max(80, w - 36), max(80, h - 48))
+    rect = _mp_map_widget_rect(self)
     p.setPen(QPen(qcol(C.PRI, 52), 1))
     p.setBrush(QBrush(qcol("#020812", 76)))
     p.drawRoundedRect(rect, 18, 18)
 
-    # Real dashboard-like map tiles first, then a subtle coordinate grid on top.
+    # Real dashboard-like map tiles. The old cyan coordinate grid is intentionally removed.
     _mp_map_draw_real_tiles(self, p, rect)
-    _mp_map_draw_grid(self, p, rect)
 
-    # Subtle red/green atmospheric hotspots.
-    for gx, gy, col, alpha in [(0.21, 0.42, C.ACC, 28), (0.53, 0.42, C.PRI, 34), (0.76, 0.42, C.RED, 24), (0.58, 0.70, C.GREEN, 20)]:
-        g = QRadialGradient(QPointF(rect.left() + rect.width()*gx, rect.top() + rect.height()*gy), rect.width()*0.18)
+    # Subtle atmospheric hotspots stay inside the map area.
+    p.save()
+    p.setClipRect(rect.adjusted(1, 1, -1, -1))
+    for gx, gy, col, alpha in [
+        (0.21, 0.42, C.ACC, 22),
+        (0.53, 0.42, C.PRI, 28),
+        (0.76, 0.42, C.RED, 20),
+        (0.58, 0.70, C.GREEN, 16),
+    ]:
+        g = QRadialGradient(
+            QPointF(rect.left() + rect.width() * gx, rect.top() + rect.height() * gy),
+            rect.width() * 0.18,
+        )
         g.setColorAt(0, qcol(col, alpha))
         g.setColorAt(1, qcol(col, 0))
-        p.setBrush(QBrush(g)); p.setPen(Qt.PenStyle.NoPen); p.drawEllipse(QPointF(rect.left()+rect.width()*gx, rect.top()+rect.height()*gy), rect.width()*0.18, rect.width()*0.18)
+        p.setBrush(QBrush(g))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(
+            QPointF(rect.left() + rect.width() * gx, rect.top() + rect.height() * gy),
+            rect.width() * 0.18,
+            rect.width() * 0.18,
+        )
 
     _mp_map_draw_city_labels(self, p, rect)
 
@@ -5007,19 +5063,148 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
         for i, item in enumerate(_mp_map_extract_points(self, "live")[:100]):
             _mp_map_draw_point(self, p, rect, item, "live", i)
 
-    # Center reticle when zoomed to a city.
+    # Center reticle when zoomed to a city/country.
     if float(getattr(self, "_security_map_zoom", 1.0) or 1.0) > 3.0:
         cx, cy = rect.center().x(), rect.center().y()
-        p.setPen(QPen(qcol(C.PRI, 115), 1.0))
+        p.setPen(QPen(qcol(C.PRI, 92), 1.0))
         p.drawLine(QPointF(cx - 18, cy), QPointF(cx + 18, cy))
         p.drawLine(QPointF(cx, cy - 18), QPointF(cx, cy + 18))
-        p.setPen(QPen(qcol(C.PRI, 74), 1.0))
+        p.setPen(QPen(qcol(C.PRI, 58), 1.0))
         p.drawEllipse(QPointF(cx, cy), 26, 26)
+    p.restore()
 
     _mp_map_draw_hud_panel(self, p, rect, w, h)
 
+    # Mini FRIDAY hologram, same idea as camera mode, always visible in map mode.
+    try:
+        self._draw_mini_friday_core(p, w, h)
+    except Exception:
+        pass
+
 
 _MPV6_ORIGINAL_HUD_PAINT = getattr(HudCanvas, "paintEvent", None)
+_MPV6_ORIGINAL_HUD_MOUSE_PRESS = getattr(HudCanvas, "mousePressEvent", None)
+_MPV6_ORIGINAL_HUD_MOUSE_MOVE = getattr(HudCanvas, "mouseMoveEvent", None)
+_MPV6_ORIGINAL_HUD_MOUSE_RELEASE = getattr(HudCanvas, "mouseReleaseEvent", None)
+_MPV6_ORIGINAL_HUD_MOUSE_DOUBLE = getattr(HudCanvas, "mouseDoubleClickEvent", None)
+_MPV6_ORIGINAL_HUD_WHEEL = getattr(HudCanvas, "wheelEvent", None)
+
+
+def _mpv6_hud_mouse_press_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)):
+        pos = _mp_map_event_pos(event)
+        rect = _mp_map_widget_rect(self)
+        if rect.contains(pos) and event.button() == Qt.MouseButton.LeftButton:
+            _mp_map_init(self)
+            self._security_map_dragging = True
+            self._security_map_drag_last = pos
+            try:
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            except Exception:
+                pass
+            event.accept()
+            return
+
+    if _MPV6_ORIGINAL_HUD_MOUSE_PRESS:
+        return _MPV6_ORIGINAL_HUD_MOUSE_PRESS(self, event)
+
+
+def _mpv6_hud_mouse_move_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
+        pos = _mp_map_event_pos(event)
+        last = getattr(self, "_security_map_drag_last", None)
+        if last is not None:
+            try:
+                dx = float(pos.x() - last.x())
+                dy = float(pos.y() - last.y())
+                z = _mp_map_tile_zoom(self)
+                center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+                center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+                new_px = QPointF(center_px.x() - dx, center_px.y() - dy)
+                lat, lng = _mp_map_world_px_to_latlng(new_px, z)
+                self._security_map_center = (lat, lng)
+                self._security_map_focus_label = "Manual"
+                self._security_map_notice = "Manual pan active · drag to move, wheel to zoom."
+                self._security_map_drag_last = pos
+                self.update()
+            except Exception:
+                pass
+        event.accept()
+        return
+
+    if _MPV6_ORIGINAL_HUD_MOUSE_MOVE:
+        return _MPV6_ORIGINAL_HUD_MOUSE_MOVE(self, event)
+
+
+def _mpv6_hud_mouse_release_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)) and bool(getattr(self, "_security_map_dragging", False)):
+        self._security_map_dragging = False
+        self._security_map_drag_last = None
+        try:
+            self.unsetCursor()
+        except Exception:
+            pass
+        event.accept()
+        return
+
+    if _MPV6_ORIGINAL_HUD_MOUSE_RELEASE:
+        return _MPV6_ORIGINAL_HUD_MOUSE_RELEASE(self, event)
+
+
+def _mpv6_hud_mouse_double_click_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)):
+        pos = _mp_map_event_pos(event)
+        rect = _mp_map_widget_rect(self)
+        if rect.contains(pos):
+            geo = _mp_map_screen_to_latlng(self, pos, rect)
+            if geo:
+                self._security_map_center = geo
+                self._security_map_zoom = min(6.6, float(getattr(self, "_security_map_zoom", 1.0) or 1.0) * 1.35)
+                self._security_map_focus_label = "Manual"
+                self._security_map_notice = "Manual zoom point selected."
+                self.update()
+            event.accept()
+            return
+
+    if _MPV6_ORIGINAL_HUD_MOUSE_DOUBLE:
+        return _MPV6_ORIGINAL_HUD_MOUSE_DOUBLE(self, event)
+
+
+def _mpv6_hud_wheel_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)):
+        pos = _mp_map_event_pos(event)
+        rect = _mp_map_widget_rect(self)
+        if rect.contains(pos):
+            before_geo = _mp_map_screen_to_latlng(self, pos, rect)
+
+            try:
+                delta = event.angleDelta().y()
+            except Exception:
+                delta = 0
+
+            current = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+            if delta > 0:
+                self._security_map_zoom = min(6.8, current * 1.22)
+            else:
+                self._security_map_zoom = max(1.0, current / 1.22)
+
+            # Keep the geographic point under the mouse as stable as possible while zooming.
+            after_geo = _mp_map_screen_to_latlng(self, pos, rect)
+            if before_geo and after_geo:
+                center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+                self._security_map_center = (
+                    _mp_map_clip_lat(float(center_lat) + (before_geo[0] - after_geo[0])),
+                    _mp_map_norm_lng(float(center_lng) + (before_geo[1] - after_geo[1])),
+                )
+
+            self._security_map_notice = "Mouse navigation active · drag to move, wheel to zoom."
+            self.update()
+            event.accept()
+            return
+
+    if _MPV6_ORIGINAL_HUD_WHEEL:
+        return _MPV6_ORIGINAL_HUD_WHEEL(self, event)
+
 
 def _mpv6_hud_paint_event(self, event):
     if bool(getattr(self, "security_map_mode", False)):
@@ -5099,6 +5284,11 @@ try:
     HudCanvas.focus_security_map = _mp_map_focus
     HudCanvas.security_map_is_open = _mp_map_is_open
     HudCanvas.paintEvent = _mpv6_hud_paint_event
+    HudCanvas.mousePressEvent = _mpv6_hud_mouse_press_event
+    HudCanvas.mouseMoveEvent = _mpv6_hud_mouse_move_event
+    HudCanvas.mouseReleaseEvent = _mpv6_hud_mouse_release_event
+    HudCanvas.mouseDoubleClickEvent = _mpv6_hud_mouse_double_click_event
+    HudCanvas.wheelEvent = _mpv6_hud_wheel_event
 
     MainWindow._start_security_map_now = _mpv6_start_security_map_now
     MainWindow._focus_security_map_now = _mpv6_focus_security_map_now
