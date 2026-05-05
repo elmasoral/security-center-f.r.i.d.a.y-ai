@@ -1401,6 +1401,85 @@ class HudCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(QRectF(8, 8, w - 16, h - 16))
 
+class ShieldMark(QWidget):
+    """
+    Header MEDPOV shield mark.
+    Drawn in-code so the app does not crash if an external logo file is missing.
+    """
+
+    def __init__(self, size: int = 50, parent=None):
+        super().__init__(parent)
+        self._size = int(size or 50)
+        self.setFixedSize(self._size, self._size)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        W = float(self.width())
+        H = float(self.height())
+        cx, cy = W / 2.0, H / 2.0
+        s = min(W, H)
+
+        # Outer glow
+        glow = QRadialGradient(QPointF(cx, cy), s * 0.62)
+        glow.setColorAt(0.00, qcol(C.PRI, 78))
+        glow.setColorAt(0.48, qcol(C.PRI, 24))
+        glow.setColorAt(1.00, qcol("#000000", 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(glow))
+        p.drawEllipse(QPointF(cx, cy), s * 0.47, s * 0.47)
+
+        # Hex frame
+        r = s * 0.36
+        hex_path = QPainterPath()
+        for i in range(6):
+            ang = math.radians(30 + i * 60)
+            x = cx + math.cos(ang) * r
+            y = cy + math.sin(ang) * r
+            if i == 0:
+                hex_path.moveTo(x, y)
+            else:
+                hex_path.lineTo(x, y)
+        hex_path.closeSubpath()
+
+        fill = QLinearGradient(0, 0, W, H)
+        fill.setColorAt(0.00, qcol("#0c3148", 230))
+        fill.setColorAt(0.55, qcol("#072033", 245))
+        fill.setColorAt(1.00, qcol("#03101d", 252))
+        p.setBrush(QBrush(fill))
+        p.setPen(QPen(qcol(C.PRI, 210), max(1.2, s * 0.035)))
+        p.drawPath(hex_path)
+
+        # Inner shield
+        shield = QPainterPath()
+        shield.moveTo(cx, cy - s * 0.20)
+        shield.lineTo(cx + s * 0.18, cy - s * 0.12)
+        shield.lineTo(cx + s * 0.15, cy + s * 0.12)
+        shield.quadTo(cx, cy + s * 0.24, cx - s * 0.15, cy + s * 0.12)
+        shield.lineTo(cx - s * 0.18, cy - s * 0.12)
+        shield.closeSubpath()
+
+        shield_grad = QLinearGradient(0, cy - s * 0.24, 0, cy + s * 0.25)
+        shield_grad.setColorAt(0.00, qcol("#13ecff", 85))
+        shield_grad.setColorAt(0.65, qcol("#0b75b9", 150))
+        shield_grad.setColorAt(1.00, qcol("#063c70", 170))
+        p.setBrush(QBrush(shield_grad))
+        p.setPen(QPen(qcol(C.PRI, 225), max(1.0, s * 0.026)))
+        p.drawPath(shield)
+
+        # Core mark
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(qcol(C.GREEN, 220), max(1.0, s * 0.025)))
+        inner = QRectF(cx - s * 0.08, cy - s * 0.08, s * 0.16, s * 0.16)
+        p.drawEllipse(inner)
+
+        p.setPen(QPen(qcol(C.PRI, 185), max(1.0, s * 0.018)))
+        p.drawLine(QPointF(cx, cy - s * 0.025), QPointF(cx, cy + s * 0.075))
+        p.drawLine(QPointF(cx - s * 0.055, cy + s * 0.025), QPointF(cx, cy + s * 0.075))
+        p.drawLine(QPointF(cx + s * 0.055, cy + s * 0.025), QPointF(cx, cy + s * 0.075))
+
 class MetricBar(QWidget):
     """
     Compact MEDPOV metric row.
@@ -3422,5 +3501,6 @@ except Exception:
     pass
 
 # === /MEDPOV FRIDAY UI V3 FILE INPUT + SECURITY BADGE FIX ===
+
 
 
