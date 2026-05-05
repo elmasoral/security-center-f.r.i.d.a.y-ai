@@ -674,6 +674,11 @@ class JarvisLive:
         self._openai_audio_chunks_seen = 0
         self._openai_audio_bytes_played = 0
         self._openai_last_assistant_text = ""
+        self._openai_user_turn_id = 0
+        self._openai_current_turn_tools = set()
+        self._openai_camera_turn_id = -1
+        self._openai_last_camera_result = ""
+        self._openai_audio_drain_reports = set()
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -998,6 +1003,8 @@ class JarvisLive:
         norm = self._norm_text(raw)
         if norm and norm == str(getattr(self, "_openai_last_user_norm", "") or "") and now - float(getattr(self, "_openai_last_user_ts", 0.0) or 0.0) < 1.2:
             return True
+        self._openai_user_turn_id = int(getattr(self, "_openai_user_turn_id", 0) or 0) + 1
+        self._openai_current_turn_tools = set()
         self._openai_last_user_norm = norm
         self._openai_last_user_ts = now
         ok1 = self._queue_openai_event_threadsafe({
@@ -1029,6 +1036,88 @@ class JarvisLive:
                 pass
         self.set_speaking(False)
 
+    def _openai_tool_signature(self, name: str, args: dict) -> str:
+        """Stable per-user-turn tool signature to stop Realtime tool loops."""
+        safe_args = {}
+        for k, v in dict(args or {}).items():
+            if str(k).startswith("_"):
+                continue
+            safe_args[str(k)] = v
+        try:
+            blob = json.dumps(safe_args, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            blob = str(safe_args)
+        return f"{int(getattr(self, '_openai_user_turn_id', 0) or 0)}:{name}:{blob}"
+
+    def _openai_should_skip_tool_loop(self, name: str, args: dict) -> str | None:
+        """Return a safe tool output when the model is repeating a tool call.
+
+        OpenAI Realtime can ask the same function through multiple lifecycle
+        events or keep calling camera again inside the same assistant turn. One
+        real user turn should get one camera observation; follow-up user speech
+        resets the turn id and unlocks the camera again.
+        """
+        sig = self._openai_tool_signature(name, args)
+        seen = getattr(self, "_openai_current_turn_tools", set()) or set()
+        if sig in seen:
+            return "Bu araç çağrısı bu kullanıcı turunda zaten çalıştırıldı. Sonuca göre kısa cevap ver; aynı aracı tekrar çağırma."
+        seen.add(sig)
+        self._openai_current_turn_tools = seen
+
+        if name == "screen_process":
+            angle = str((args or {}).get("angle") or "screen").lower().strip()
+            if angle == "camera":
+                turn_id = int(getattr(self, "_openai_user_turn_id", 0) or 0)
+                if int(getattr(self, "_openai_camera_turn_id", -1) or -1) == turn_id:
+                    last = str(getattr(self, "_openai_last_camera_result", "") or "Görüntü analizi bu turda zaten yapıldı.")
+                    return "Kamera bu kullanıcı turunda zaten analiz edildi. Son kamera sonucu: " + last + " Buna göre kısa cevap ver; kullanıcı yeni bir komut vermeden tekrar kamera çağırma."
+                self._openai_camera_turn_id = turn_id
+        return None
+
+    async def _openai_report_audio_drain(self, response_id: str, transcript: str, seen_at_done: int) -> None:
+        """Wait for realtime audio playback to drain, then diagnose/fallback.
+
+        response.done can arrive before the local speaker queue has finished
+        playing. The old log therefore looked like audio was missing even when
+        chunks were still queued. This waits briefly and only uses Speech API
+        fallback when playback did not materially advance.
+        """
+        response_id = str(response_id or f"resp_{int(time.time()*1000)}")
+        reports = getattr(self, "_openai_audio_drain_reports", set()) or set()
+        if response_id in reports:
+            return
+        reports.add(response_id)
+        self._openai_audio_drain_reports = reports
+
+        start = time.time()
+        # 24 kHz, PCM16 mono => 48,000 bytes/second. Give the queue enough time
+        # to drain without blocking the websocket receive loop.
+        expected_sec = max(0.6, min(12.0, float(seen_at_done or 0) / 48000.0 + 0.8))
+        while time.time() - start < expected_sec:
+            q = getattr(self, "_openai_audio_queue", None)
+            played = int(getattr(self, "_openai_audio_bytes_played", 0) or 0)
+            seen_now = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0)
+            if seen_now > 0 and played >= int(seen_now * 0.96) and (not q or q.empty()):
+                print(f"[OpenAI RT] audio drain ok — seen={seen_now:,} bytes, played={played:,} bytes")
+                return
+            await asyncio.sleep(0.12)
+
+        played = int(getattr(self, "_openai_audio_bytes_played", 0) or 0)
+        seen_now = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0)
+        qsize = 0
+        try:
+            q = getattr(self, "_openai_audio_queue", None)
+            qsize = q.qsize() if q else 0
+        except Exception:
+            qsize = 0
+        print(f"[OpenAI RT] audio drain warning — seen={seen_now:,} bytes, played={played:,} bytes, queue={qsize}")
+
+        # If the realtime player did not play enough audio, use the reliable
+        # WAV fallback even though realtime chunks arrived. This prevents silent
+        # answers on Windows devices that accept PortAudio writes but output no sound.
+        if transcript and seen_now > 0 and played < int(seen_now * 0.45):
+            await self._openai_tts_wav_fallback(transcript)
+
     async def _openai_execute_tool_result(self, ws, name: str, args: dict, call_id: str) -> None:
         name = str(name or "").strip()
         args = dict(args or {})
@@ -1044,9 +1133,11 @@ class JarvisLive:
         self._openai_executed_tool_calls = seen
         self.ui.set_state("THINKING")
         print(f"[OpenAI RT] 🔧 {name} {args}")
-        output = "Done."
+        output = self._openai_should_skip_tool_loop(name, args) or "Done."
         try:
-            if name == "screen_process":
+            if output != "Done.":
+                pass
+            elif name == "screen_process":
                 angle = str(args.get("angle") or "screen").lower().strip()
                 if angle == "camera":
                     cancel_vision_requests()
@@ -1058,6 +1149,8 @@ class JarvisLive:
                 loop = asyncio.get_event_loop()
                 r = await loop.run_in_executor(None, lambda: screen_process(parameters=args, response=None, player=self.ui, session_memory=None))
                 output = str(r or "Görüntü analizi tamamlandı ama net sonuç alınamadı.")
+                if str(args.get("angle") or "").lower().strip() == "camera":
+                    self._openai_last_camera_result = output
             else:
                 shim = _OpenAIToolCallShim(call_id, name, args)
                 fr = await self._execute_tool(shim)
@@ -1075,7 +1168,7 @@ class JarvisLive:
             "item": {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": json.dumps({"result": output}, ensure_ascii=False),
+                "output": json.dumps({"result": output, "instruction": "Bu tool sonucuna göre kullanıcıya kısa ve doğal cevap ver. Aynı tool'u tekrar çağırma."}, ensure_ascii=False),
             },
         }, ensure_ascii=False))
         await self._openai_send_response_create(ws, after_tool=True)
@@ -1363,6 +1456,8 @@ class JarvisLive:
                     if not (norm == self._last_voice_final_norm and now - self._last_voice_final_ts < 2.5):
                         self._last_voice_final_norm = norm
                         self._last_voice_final_ts = now
+                        self._openai_user_turn_id = int(getattr(self, "_openai_user_turn_id", 0) or 0) + 1
+                        self._openai_current_turn_tools = set()
                         self.ui.write_log(f"You: {txt}")
                 continue
 
@@ -1375,7 +1470,16 @@ class JarvisLive:
                         self._openai_audio_bytes_seen = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0) + len(decoded)
                         if int(getattr(self, "_openai_audio_chunks_seen", 0) or 0) == 1:
                             print(f"[OpenAI RT] 🔊 first realtime audio chunk: {len(decoded):,} bytes")
-                        self._openai_audio_queue.put_nowait(decoded)
+                        try:
+                            self._openai_audio_queue.put_nowait(decoded)
+                        except asyncio.QueueFull:
+                            # Drop the oldest unplayed chunk rather than the newest; this
+                            # keeps the assistant closer to real time while avoiding silence.
+                            try:
+                                self._openai_audio_queue.get_nowait()
+                            except Exception:
+                                pass
+                            self._openai_audio_queue.put_nowait(decoded)
                     except Exception as exc:
                         print(f"[OpenAI RT] ⚠️ audio delta ignored: {exc}")
                 continue
@@ -1462,8 +1566,15 @@ class JarvisLive:
                         asyncio.create_task(self._openai_tts_wav_fallback(full))
                 audio_seen = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0)
                 played = int(getattr(self, "_openai_audio_bytes_played", 0) or 0)
+                qsize = 0
+                try:
+                    qsize = self._openai_audio_queue.qsize() if self._openai_audio_queue else 0
+                except Exception:
+                    qsize = 0
+                response_id = str((event.get("response") or {}).get("id") or self._openai_active_response_id or "")
                 if full:
-                    print(f"[OpenAI RT] turn done — audio_seen={audio_seen:,} bytes, played={played:,} bytes")
+                    print(f"[OpenAI RT] turn done — audio_seen={audio_seen:,} bytes, played_now={played:,} bytes, queue={qsize}")
+                    asyncio.create_task(self._openai_report_audio_drain(response_id, full, audio_seen))
                 assistant_parts = []
                 text_parts = []
                 if self._openai_turn_done_event:
@@ -2423,7 +2534,7 @@ class JarvisLive:
                     self._openai_ws = ws
                     self._openai_loop = asyncio.get_event_loop()
                     self._openai_send_queue = asyncio.Queue(maxsize=80)
-                    self._openai_audio_queue = asyncio.Queue(maxsize=120)
+                    self._openai_audio_queue = asyncio.Queue(maxsize=600)
                     self._openai_turn_done_event = asyncio.Event()
                     self.audio_in_queue = self._openai_audio_queue
                     self.out_queue = self._openai_send_queue
@@ -2439,6 +2550,11 @@ class JarvisLive:
                     self._openai_audio_bytes_seen = 0
                     self._openai_audio_chunks_seen = 0
                     self._openai_audio_bytes_played = 0
+                    self._openai_user_turn_id = 0
+                    self._openai_current_turn_tools = set()
+                    self._openai_camera_turn_id = -1
+                    self._openai_last_camera_result = ""
+                    self._openai_audio_drain_reports = set()
                     self._openai_session_update_ok = False
                     self._openai_session_update_retry = 0
 
