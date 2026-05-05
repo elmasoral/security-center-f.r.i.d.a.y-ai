@@ -1401,6 +1401,69 @@ class HudCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(QRectF(8, 8, w - 16, h - 16))
 
+class AssetIconWidget(QWidget):
+    """
+    MEDPOV real asset icon widget.
+    Used for header logo mark and Security Center badge.
+    """
+
+    def __init__(self, asset_name: str = "medpov_ui_shield.png", size: int = 50, glow: bool = True, parent=None):
+        super().__init__(parent)
+        self.asset_name = asset_name
+        self.icon_size = int(size or 50)
+        self.glow = bool(glow)
+        self.setFixedSize(self.icon_size, self.icon_size)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _asset_path(self) -> Path:
+        try:
+            return BASE_DIR / "assets" / self.asset_name
+        except Exception:
+            return Path("assets") / self.asset_name
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        W = float(self.width())
+        H = float(self.height())
+        cx, cy = W / 2.0, H / 2.0
+        s = min(W, H)
+
+        if self.glow:
+            halo = QRadialGradient(QPointF(cx, cy), s * 0.62)
+            halo.setColorAt(0.00, qcol(C.PRI, 70))
+            halo.setColorAt(0.52, qcol(C.PRI, 22))
+            halo.setColorAt(1.00, qcol("#000000", 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(halo))
+            p.drawEllipse(QPointF(cx, cy), s * 0.50, s * 0.50)
+
+        path = self._asset_path()
+        pix = QPixmap(str(path))
+
+        if pix.isNull():
+            # Asset bulunamazsa uygulama Ã§Ã¶kmesin diye minimal fallback
+            p.setPen(QPen(qcol(C.PRI, 220), max(1, int(s * 0.04))))
+            p.setBrush(QBrush(qcol("#061421", 230)))
+            p.drawRoundedRect(QRectF(4, 4, W - 8, H - 8), 12, 12)
+            p.setFont(QFont("Segoe UI", max(8, int(s * 0.22)), QFont.Weight.Black))
+            p.setPen(qcol(C.PRI, 235))
+            p.drawText(QRectF(0, 0, W, H), Qt.AlignmentFlag.AlignCenter, "MP")
+            return
+
+        target_size = s * 0.84
+        target = QRectF(
+            (W - target_size) / 2.0,
+            (H - target_size) / 2.0,
+            target_size,
+            target_size,
+        )
+
+        p.drawPixmap(target, pix, QRectF(pix.rect()))
+
+
 class ShieldMark(QWidget):
     """
     Header MEDPOV shield mark.
@@ -2408,7 +2471,7 @@ class MainWindow(QMainWindow):
 
         left_wrap = QHBoxLayout()
         left_wrap.setSpacing(13)
-        left_wrap.addWidget(ShieldMark(size=50))
+        left_wrap.addWidget(AssetIconWidget("medpov_ui_shield.png", size=50, glow=True))
 
         left = QVBoxLayout()
         left.setSpacing(1)
