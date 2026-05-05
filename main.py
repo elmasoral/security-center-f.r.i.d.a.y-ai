@@ -587,14 +587,14 @@ TOOL_DECLARATIONS = [
     {
         "name": "security_center",
         "description": (
-            "Connects to the live MEDPOV Security Center and reads or manages threats, events, IP profiles, traffic, live sessions, bots, login pressure, health reports, and IP rules. "
+            "Connects to the live MEDPOV Security Center and reads or manages threats, events, IP profiles, traffic, live sessions, bots, login pressure, health reports, Security Center map intelligence, and IP rules. "
             "Use this whenever the user asks about Security Center, threats, attacks, malicious IPs, bot/scanner events, blocked requests, incident analysis, or wants to block/allow/ignore an IP. "
             "If the user asks to research an IP on the internet, first call this tool for Security Center context, then use web_search with the returned research queries if needed."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "overview | threats | events | event | ip_profile | analyze | traffic | live | bots | login | health | settings | capabilities | block_ip | allow_ip | ignore_ip | resolve_event | resolve_ip_events | ai_recheck"},
+                "action": {"type": "STRING", "description": "overview | threats | events | event | ip_profile | analyze | traffic | live | bots | login | health | settings | capabilities | map_open | map_threat | map_live | map_both | map_zoom | map_close | block_ip | allow_ip | ignore_ip | resolve_event | resolve_ip_events | ai_recheck"},
                 "ip": {"type": "STRING", "description": "IP address for ip_profile/analyze/block/allow/ignore/traffic"},
                 "event_id": {"type": "INTEGER", "description": "Security event ID for event/analyze/resolve_event"},
                 "risk": {"type": "STRING", "description": "Optional risk filter: LOW | MEDIUM | HIGH | CRITICAL"},
@@ -602,6 +602,32 @@ TOOL_DECLARATIONS = [
                 "hours": {"type": "INTEGER", "description": "Lookback period in hours"},
                 "minutes": {"type": "INTEGER", "description": "Duration for temporary IP block"},
                 "reason": {"type": "STRING", "description": "Reason for write actions"},
+                "text": {"type": "STRING", "description": "Original user request for parsing context"},
+                "mode": {"type": "STRING", "description": "Map mode for map actions: world | threat | live | both"},
+                "focus": {"type": "STRING", "description": "City/place for map_zoom"},
+                "threat_range": {"type": "STRING", "description": "Threat map range: 1h | 6h | 24h | 1w | 1m"},
+                "live_range": {"type": "STRING", "description": "Live map range: live | 1h | 6h | 24h | 1w | 1m"}
+            },
+            "required": ["action"]
+        }
+    },
+
+    {
+        "name": "security_map",
+        "description": (
+            "Opens and controls the large MEDPOV Security Center global map HUD inside FRIDAY. "
+            "Use this when the user says harita aç, map open, Londra aç, zoom to a city, show latest threats on map, show live connections, or show threat and live together. "
+            "The map can start as a clean world map without API data, zoom to known cities, or draw Security Center map-intelligence layers from the remote API."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "map_open | map_close | map_zoom | map_threat | map_live | map_both | map_data"},
+                "mode": {"type": "STRING", "description": "world | threat | live | both"},
+                "focus": {"type": "STRING", "description": "City/place to focus or zoom, for example London, Londra, Istanbul, Tokyo"},
+                "threat_range": {"type": "STRING", "description": "Threat map range: 1h | 6h | 24h | 1w | 1m"},
+                "live_range": {"type": "STRING", "description": "Live map range: live | 1h | 6h | 24h | 1w | 1m"},
+                "include_curve_points": {"type": "BOOLEAN", "description": "Whether to request curved trace points from the API"},
                 "text": {"type": "STRING", "description": "Original user request for parsing context"}
             },
             "required": ["action"]
@@ -877,6 +903,7 @@ class JarvisLive:
             "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
             "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
+            "For map commands such as harita aç, Londra aç, latest threats on map, live connections, or both layers, call security_map instead of answering verbally. The map HUD is a local visual mode, similar to camera mode.",
             "FRIDAY runtime commands are NOT computer settings. If the user says standby, stand by, bekleme moduna geç, bekleme modunu aktif et, dinlemeyi durdur, or sleep mode, do not call computer_settings; switch to standby/listening state only.",
             "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
             "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
@@ -2114,6 +2141,89 @@ class JarvisLive:
             return "Listening mode active. Give a very short acknowledgement only if needed."
         return None
 
+
+    def _parse_security_map_direct_command(self, text: str) -> dict | None:
+        raw = (text or "").strip()
+        t = self._norm_text(raw)
+        if not t:
+            return None
+
+        # Hard map close commands.
+        close_phrases = (
+            "/map close", "/harita-kapat", "haritayi kapat", "haritayı kapat",
+            "harita kapat", "map close", "close map", "security map kapat",
+        )
+        if any(p in t for p in close_phrases):
+            return {"action": "map_close", "text": raw}
+
+        map_open = False
+        try:
+            win = getattr(getattr(self.ui, "_win", None), "hud", None)
+            map_open = bool(win and hasattr(win, "security_map_is_open") and win.security_map_is_open())
+        except Exception:
+            map_open = False
+
+        # Layer commands: these must call the Security Center remote map API.
+        has_map_word = any(w in t for w in ("harita", "map", "global map", "dunya", "dünya"))
+        threat_words = ("son tehdit", "tehditleri", "tehditler", "threat", "attack", "saldiri", "saldırı")
+        live_words = ("canli baglanti", "canlı bağlantı", "canli ziyaret", "canlı ziyaret", "live connection", "live visitor", "visitor", "user")
+        both_words = ("both", "hepsi", "birlikte", "beraber", "tehdit ve canli", "tehdit ve canlı", "threat and live")
+        if (has_map_word or map_open) and any(p in t for p in both_words):
+            return {"action": "map_both", "live_range": "live", "include_curve_points": True, "text": raw}
+        if (has_map_word or map_open) and any(p in t for p in threat_words):
+            return {"action": "map_threat", "threat_range": "24h", "include_curve_points": True, "text": raw}
+        if (has_map_word or map_open) and any(p in t for p in live_words):
+            return {"action": "map_live", "live_range": "live", "include_curve_points": True, "text": raw}
+
+        # Clean world map open commands.
+        open_phrases = (
+            "/map", "/harita", "harita ac", "harita aç", "haritayi ac", "haritayı aç",
+            "dunya haritasi ac", "dünya haritası aç", "global harita ac", "global map open",
+            "map open", "open map", "security map open", "security harita ac",
+        )
+        if any(p in t for p in open_phrases):
+            return {"action": "map_open", "text": raw}
+
+        # If the map is open, a known city/place phrase can directly focus it.
+        known_places = (
+            "londra", "london", "istanbul", "new york", "tokyo", "tokio", "paris", "berlin", "dubai",
+            "singapore", "sydney", "moscow", "moskova", "cairo", "kahire", "toronto", "amsterdam",
+            "frankfurt", "los angeles", "san francisco", "hong kong", "mumbai", "delhi", "sao paulo",
+        )
+        if map_open or any(w in t for w in ("zoom", "odaklan", "haritada", "mapte")):
+            for place in known_places:
+                if place in t:
+                    return {"action": "map_zoom", "focus": place, "text": raw}
+
+        return None
+
+    def _handle_security_map_direct_command(self, text: str) -> bool:
+        params = self._parse_security_map_direct_command(text)
+        if not params:
+            return False
+
+        def _worker():
+            try:
+                self.ui.set_state("THINKING")
+                result = security_center_action(parameters=params, player=self.ui, speak=self.speak)
+                self.ui.write_log("FRIDAY: " + str(result))
+                # Map mode is visual; keep speech short if this came from voice.
+                try:
+                    if not str(params.get("action", "")).endswith("close"):
+                        self.speak(str(result).split("\n", 1)[0])
+                except Exception:
+                    pass
+            except Exception as e:
+                self.ui.write_log(f"ERR: Security map command failed — {e}")
+            finally:
+                if self.ui.standby:
+                    self.ui.set_state("STANDBY")
+                elif not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
+
     def _handle_security_center_direct_command(self, text: str) -> bool:
         raw = (text or "").strip()
         if not raw.lower().startswith(("/sc", "sc ", "security-center ")):
@@ -2141,6 +2251,9 @@ class JarvisLive:
         # routed to OpenAI so it can call screen_process and speak the result in
         # the same low-latency voice session.
         if self._handle_friday_mode_command(text, source="text"):
+            self._suppress_model_output(2.5)
+            return
+        if self._handle_security_map_direct_command(text):
             self._suppress_model_output(2.5)
             return
         if self._handle_security_center_direct_command(text):
@@ -2405,6 +2518,10 @@ class JarvisLive:
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "security_map":
+                r = await loop.run_in_executor(None, lambda: security_center_action(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Security Center map command completed."
 
             elif name == "security_center":
                 r = await loop.run_in_executor(None, lambda: security_center_action(parameters=args, player=self.ui, speak=self.speak))

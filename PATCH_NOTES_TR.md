@@ -464,3 +464,16 @@ Sonra FRIDAY'i kapatıp tekrar aç.
 - Eski cevap bitmeden: `Tekrar bak, şimdi elimde ne var?`
 - `Kamerayı kapatır mısın?`
 - Settings > Ses > Cevap dili: English seçip yeniden başlat, sonra aynı komutları test et.
+
+## v2.8.7 Security Center Global Map HUD Patch
+
+- FRIDAY içine büyük Security Center dünya haritası modu eklendi.
+- “harita aç / map open” komutu artık orta FRIDAY HUD alanını dünya haritasına çevirir.
+- “Londra aç”, “Tokyo’ya zoom yap”, “Istanbul’a git” gibi şehir odaklama komutları eklendi.
+- Security Center Remote API map endpointleri desteklendi: `map`, `threat-map`, `live-map`, `both-map`.
+- “son tehditleri haritada göster” komutu Threat Map katmanını API’den alıp HUD üzerinde saldırı noktaları ve trace çizgileriyle gösterir.
+- “canlı bağlantıları göster” komutu Live Map katmanını API’den alıp canlı ziyaretçi noktaları ve bağlantı çizgileriyle gösterir.
+- “tehditleri ve canlı bağlantıları birlikte göster” komutu Both Map katmanını açar.
+- Security Center client tüm yeni map-intelligence alanlarını okuyacak şekilde genişletildi.
+- Security Center tool fallback mantığı eklendi; ileride eklenen read action’lar raw API action olarak çağrılabilir.
+- `security_map` isimli yeni AI tool eklendi; OpenAI Realtime/Gemini tool routing map komutlarını doğrudan görsel HUD’a yönlendirebilir.

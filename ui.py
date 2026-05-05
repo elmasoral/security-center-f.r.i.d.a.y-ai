@@ -2339,6 +2339,9 @@ class MainWindow(QMainWindow):
     _standby_sig      = pyqtSignal(bool)
     _camera_start_sig = pyqtSignal(object)
     _camera_stop_sig  = pyqtSignal()
+    _map_start_sig    = pyqtSignal(object)
+    _map_focus_sig    = pyqtSignal(object)
+    _map_stop_sig     = pyqtSignal()
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -2406,6 +2409,9 @@ class MainWindow(QMainWindow):
         self._standby_sig.connect(self._set_standby)
         self._camera_start_sig.connect(self._start_camera_mode_now)
         self._camera_stop_sig.connect(self._stop_camera_mode_now)
+        self._map_start_sig.connect(self._start_security_map_now)
+        self._map_focus_sig.connect(self._focus_security_map_now)
+        self._map_stop_sig.connect(self._stop_security_map_now)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -3246,6 +3252,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             self.hud.stop_camera_capture_only()
+        except Exception:
+            pass
+        try:
+            if hasattr(self.hud, "stop_security_map_mode"):
+                self.hud.stop_security_map_mode()
         except Exception:
             pass
         super().closeEvent(event)
@@ -4373,3 +4384,583 @@ except Exception as _mpv5_settings_patch_error:
         pass
 
 # === /MEDPOV FRIDAY UI V5 SPLIT SETTINGS + PC WORKSPACE PANEL ===
+
+# === MEDPOV FRIDAY UI V6 SECURITY CENTER GLOBAL MAP HUD ===
+# Large AI-grade world map mode for Security Center map-intelligence data.
+
+_MP_MAP_PLACES = {
+    "london": (51.5072, -0.1276, "London"), "londra": (51.5072, -0.1276, "London"),
+    "istanbul": (41.0082, 28.9784, "Istanbul"), "istanbul ac": (41.0082, 28.9784, "Istanbul"),
+    "new york": (40.7128, -74.0060, "New York"), "newyork": (40.7128, -74.0060, "New York"),
+    "los angeles": (34.0522, -118.2437, "Los Angeles"),
+    "san francisco": (37.7749, -122.4194, "San Francisco"),
+    "paris": (48.8566, 2.3522, "Paris"), "paris ac": (48.8566, 2.3522, "Paris"),
+    "berlin": (52.5200, 13.4050, "Berlin"), "frankfurt": (50.1109, 8.6821, "Frankfurt"),
+    "amsterdam": (52.3676, 4.9041, "Amsterdam"), "madrid": (40.4168, -3.7038, "Madrid"),
+    "rome": (41.9028, 12.4964, "Rome"), "roma": (41.9028, 12.4964, "Rome"),
+    "moscow": (55.7558, 37.6173, "Moscow"), "moskova": (55.7558, 37.6173, "Moscow"),
+    "dubai": (25.2048, 55.2708, "Dubai"), "doha": (25.2854, 51.5310, "Doha"),
+    "riyadh": (24.7136, 46.6753, "Riyadh"), "riyad": (24.7136, 46.6753, "Riyadh"),
+    "tokyo": (35.6762, 139.6503, "Tokyo"), "tokio": (35.6762, 139.6503, "Tokyo"),
+    "seoul": (37.5665, 126.9780, "Seoul"), "singapore": (1.3521, 103.8198, "Singapore"),
+    "hong kong": (22.3193, 114.1694, "Hong Kong"), "mumbai": (19.0760, 72.8777, "Mumbai"),
+    "delhi": (28.7041, 77.1025, "Delhi"), "sydney": (-33.8688, 151.2093, "Sydney"),
+    "melbourne": (-37.8136, 144.9631, "Melbourne"), "sao paulo": (-23.5505, -46.6333, "São Paulo"),
+    "são paulo": (-23.5505, -46.6333, "São Paulo"), "rio": (-22.9068, -43.1729, "Rio de Janeiro"),
+    "toronto": (43.6532, -79.3832, "Toronto"), "vancouver": (49.2827, -123.1207, "Vancouver"),
+    "mexico city": (19.4326, -99.1332, "Mexico City"), "meksika": (19.4326, -99.1332, "Mexico City"),
+    "cairo": (30.0444, 31.2357, "Cairo"), "kahire": (30.0444, 31.2357, "Cairo"),
+    "lagos": (6.5244, 3.3792, "Lagos"), "johannesburg": (-26.2041, 28.0473, "Johannesburg"),
+}
+
+_MP_MAP_CITY_LABELS = [
+    (51.5072, -0.1276, "London"), (41.0082, 28.9784, "Istanbul"), (40.7128, -74.0060, "New York"),
+    (34.0522, -118.2437, "Los Angeles"), (48.8566, 2.3522, "Paris"), (52.5200, 13.4050, "Berlin"),
+    (55.7558, 37.6173, "Moscow"), (25.2048, 55.2708, "Dubai"), (35.6762, 139.6503, "Tokyo"),
+    (1.3521, 103.8198, "Singapore"), (22.3193, 114.1694, "Hong Kong"), (-33.8688, 151.2093, "Sydney"),
+    (-23.5505, -46.6333, "São Paulo"), (43.6532, -79.3832, "Toronto"), (30.0444, 31.2357, "Cairo"),
+]
+
+# Very lightweight vector land masses, enough for a premium offline map without WebEngine/tiles.
+# Coordinates are lng, lat in rough equirectangular space.
+_MP_LAND_POLYS = [
+    [(-168, 72), (-142, 70), (-122, 62), (-105, 58), (-90, 50), (-72, 48), (-58, 56), (-52, 45), (-68, 25), (-84, 18), (-98, 16), (-117, 25), (-128, 36), (-150, 50), (-168, 72)],
+    [(-82, 13), (-70, 10), (-55, 2), (-48, -12), (-57, -35), (-66, -55), (-76, -45), (-82, -20), (-82, 13)],
+    [(-52, 84), (-20, 78), (16, 70), (40, 64), (32, 54), (10, 54), (-20, 60), (-48, 72), (-52, 84)],
+    [(-10, 36), (3, 52), (30, 58), (60, 55), (95, 60), (130, 52), (150, 45), (160, 30), (135, 18), (105, 8), (80, 20), (52, 26), (34, 30), (26, 40), (8, 44), (-10, 36)],
+    [(-17, 36), (8, 35), (30, 30), (44, 12), (38, -20), (24, -35), (8, -34), (-5, -18), (-12, 8), (-17, 36)],
+    [(68, 23), (86, 28), (94, 20), (82, 8), (74, 8), (68, 23)],
+    [(99, 20), (112, 18), (121, 8), (116, -6), (104, -8), (97, 6), (99, 20)],
+    [(128, -12), (146, -16), (154, -30), (145, -43), (126, -38), (113, -25), (128, -12)],
+    [(35, 32), (49, 28), (56, 18), (48, 12), (40, 20), (35, 32)],
+    [(138, 42), (146, 41), (145, 35), (139, 34), (138, 42)],
+]
+
+
+def _mp_map_norm_place(value: str) -> str:
+    value = (value or "").lower().strip()
+    value = value.translate(str.maketrans({"ı": "i", "ğ": "g", "ü": "u", "ş": "s", "ö": "o", "ç": "c"}))
+    value = value.replace("'", " ").replace("’", " ")
+    for word in ("ac", "aç", "zoom", "yap", "git", "goster", "göster", "harita", "map", "open", "to", "go", "konumuna", "odaklan"):
+        value = value.replace(word, " ")
+    return " ".join(value.split())
+
+
+def _mp_map_init(self):
+    if not hasattr(self, "security_map_mode"):
+        self.security_map_mode = False
+    if not hasattr(self, "_security_map_data"):
+        self._security_map_data = {}
+    if not hasattr(self, "_security_map_active_mode"):
+        self._security_map_active_mode = "world"
+    if not hasattr(self, "_security_map_center"):
+        self._security_map_center = (18.0, 28.0)  # lat, lng
+    if not hasattr(self, "_security_map_zoom"):
+        self._security_map_zoom = 1.0
+    if not hasattr(self, "_security_map_focus_label"):
+        self._security_map_focus_label = "World"
+    if not hasattr(self, "_security_map_notice"):
+        self._security_map_notice = "World intelligence map ready."
+
+
+def _mp_map_find_place(place: str):
+    q = _mp_map_norm_place(place)
+    if not q:
+        return None
+    if q in _MP_MAP_PLACES:
+        return _MP_MAP_PLACES[q]
+    for key, value in _MP_MAP_PLACES.items():
+        if key in q or q in key:
+            return value
+    return None
+
+
+def _mp_map_start(self, mode="world", map_data=None, focus=""):
+    _mp_map_init(self)
+    self.security_map_mode = True
+    try:
+        self.stop_camera_capture_only()
+    except Exception:
+        pass
+    self.camera_mode = False
+    self.state = "MAP"
+    self._security_map_active_mode = (mode or "world").lower().strip()
+    self._security_map_data = map_data if isinstance(map_data, dict) else {}
+    self._security_map_notice = "Security Center map intelligence loaded." if self._security_map_data else "World intelligence map ready."
+    place = _mp_map_find_place(focus)
+    if place:
+        lat, lng, label = place
+        self._security_map_center = (lat, lng)
+        self._security_map_zoom = 4.8
+        self._security_map_focus_label = label
+    elif self._security_map_data.get("target") and self._security_map_active_mode in {"threat", "live", "both"}:
+        target = self._security_map_data.get("target") or {}
+        try:
+            self._security_map_center = (float(target.get("lat", 28.0)), float(target.get("lng", 18.0)))
+            self._security_map_zoom = 1.85
+            self._security_map_focus_label = str(target.get("url") or target.get("label") or "Protected target")
+        except Exception:
+            self._security_map_center = (18.0, 28.0)
+            self._security_map_zoom = 1.0
+            self._security_map_focus_label = "World"
+    else:
+        self._security_map_center = (18.0, 28.0)
+        self._security_map_zoom = 1.0
+        self._security_map_focus_label = "World"
+    self.update()
+    return True
+
+
+def _mp_map_stop(self):
+    _mp_map_init(self)
+    self.security_map_mode = False
+    self._security_map_data = {}
+    self._security_map_active_mode = "world"
+    self.state = "IDLE"
+    self.update()
+
+
+def _mp_map_focus(self, place: str):
+    _mp_map_init(self)
+    hit = _mp_map_find_place(place)
+    if not hit:
+        self._security_map_notice = f"Unknown focus target: {place}"
+        self.update()
+        return False
+    lat, lng, label = hit
+    self.security_map_mode = True
+    self.camera_mode = False
+    self.state = "MAP"
+    self._security_map_center = (float(lat), float(lng))
+    self._security_map_zoom = 5.2
+    self._security_map_focus_label = label
+    self._security_map_notice = f"Focused on {label}."
+    self.update()
+    return True
+
+
+def _mp_map_is_open(self):
+    return bool(getattr(self, "security_map_mode", False))
+
+
+def _mp_map_project(self, lat, lng, rect: QRectF):
+    _mp_map_init(self)
+    center_lat, center_lng = self._security_map_center
+    zoom = max(0.85, min(7.0, float(self._security_map_zoom or 1.0)))
+    # Slightly compressed vertical range gives a dashboard-like wide map.
+    scale_x = rect.width() / (360.0 / zoom)
+    scale_y = rect.height() / (170.0 / zoom)
+    scale = min(scale_x, scale_y)
+    x = rect.center().x() + (float(lng) - float(center_lng)) * scale
+    y = rect.center().y() - (float(lat) - float(center_lat)) * scale
+    return QPointF(x, y)
+
+
+def _mp_map_on_screen(pt: QPointF, rect: QRectF, margin: float = 80.0) -> bool:
+    return (rect.left() - margin) <= pt.x() <= (rect.right() + margin) and (rect.top() - margin) <= pt.y() <= (rect.bottom() + margin)
+
+
+def _mp_map_draw_grid(self, p: QPainter, rect: QRectF):
+    p.save()
+    p.setClipRect(rect)
+    p.setPen(QPen(qcol(C.PRI, 34), 1))
+    for lng in range(-180, 181, 30):
+        a = _mp_map_project(self, -75, lng, rect)
+        b = _mp_map_project(self, 75, lng, rect)
+        p.drawLine(a, b)
+    for lat in range(-60, 81, 20):
+        a = _mp_map_project(self, lat, -180, rect)
+        b = _mp_map_project(self, lat, 180, rect)
+        p.drawLine(a, b)
+    p.restore()
+
+
+def _mp_map_draw_land(self, p: QPainter, rect: QRectF):
+    p.save()
+    p.setClipRect(rect)
+    for poly in _MP_LAND_POLYS:
+        path = QPainterPath()
+        first = True
+        for lng, lat in poly:
+            pt = _mp_map_project(self, lat, lng, rect)
+            if first:
+                path.moveTo(pt)
+                first = False
+            else:
+                path.lineTo(pt)
+        path.closeSubpath()
+        p.setPen(QPen(qcol("#2b526b", 85), 1.0))
+        p.setBrush(QBrush(qcol("#122a34", 185)))
+        p.drawPath(path)
+    p.restore()
+
+
+def _mp_map_risk_color(risk: str, kind: str = "threat") -> str:
+    if kind == "live":
+        return C.GREEN
+    risk = (risk or "").lower()
+    if "critical" in risk:
+        return C.RED
+    if "high" in risk:
+        return "#ff6b35"
+    if "medium" in risk:
+        return "#ffd166"
+    return C.PRI
+
+
+def _mp_map_extract_points(self, kind: str):
+    data = getattr(self, "_security_map_data", {}) or {}
+    layers = data.get("layers") if isinstance(data, dict) else {}
+    layer = (layers or {}).get(kind) if isinstance(layers, dict) else {}
+    points = layer.get("points") if isinstance(layer, dict) else None
+    if points:
+        return [x for x in points if isinstance(x, dict)]
+    key = "threat_events" if kind == "threat" else "live_users"
+    return [x for x in (data.get(key) or []) if isinstance(x, dict)] if isinstance(data, dict) else []
+
+
+def _mp_map_extract_traces(self, kind: str):
+    data = getattr(self, "_security_map_data", {}) or {}
+    layers = data.get("layers") if isinstance(data, dict) else {}
+    layer = (layers or {}).get(kind) if isinstance(layers, dict) else {}
+    traces = layer.get("traces") if isinstance(layer, dict) else None
+    if traces:
+        return [x for x in traces if isinstance(x, dict)]
+    traces_root = data.get("traces") if isinstance(data, dict) else {}
+    return [x for x in ((traces_root or {}).get(kind) or []) if isinstance(x, dict)] if isinstance(traces_root, dict) else []
+
+
+def _mp_map_draw_trace(self, p: QPainter, rect: QRectF, trace: dict, kind: str):
+    style = trace.get("style") or {}
+    color = style.get("color") or (C.GREEN if kind == "live" else C.ACC)
+    opacity = int(225 * float(style.get("opacity", .78) or .78))
+    width = float(style.get("weight", 2) or 2)
+    p.setPen(QPen(qcol(str(color), opacity), max(1.2, width), Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap))
+    curve_points = trace.get("curve_points") or []
+    path = QPainterPath()
+    has_path = False
+    if isinstance(curve_points, list) and len(curve_points) >= 2:
+        for idx, pair in enumerate(curve_points):
+            try:
+                lat, lng = float(pair[0]), float(pair[1])
+            except Exception:
+                continue
+            pt = _mp_map_project(self, lat, lng, rect)
+            if idx == 0:
+                path.moveTo(pt)
+            else:
+                path.lineTo(pt)
+            has_path = True
+    else:
+        src = trace.get("from") or {}
+        dst = trace.get("to") or {}
+        try:
+            p1 = _mp_map_project(self, float(src.get("lat")), float(src.get("lng")), rect)
+            p2 = _mp_map_project(self, float(dst.get("lat")), float(dst.get("lng")), rect)
+            mid = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2 - abs(p2.x() - p1.x()) * 0.16)
+            path.moveTo(p1)
+            path.quadTo(mid, p2)
+            has_path = True
+        except Exception:
+            has_path = False
+    if has_path:
+        p.drawPath(path)
+
+
+def _mp_map_draw_point(self, p: QPainter, rect: QRectF, item: dict, kind: str, index: int):
+    try:
+        lat, lng = float(item.get("lat")), float(item.get("lng"))
+    except Exception:
+        return
+    pt = _mp_map_project(self, lat, lng, rect)
+    if not _mp_map_on_screen(pt, rect, 60):
+        return
+    source = item.get("source") if isinstance(item.get("source"), dict) else item
+    risk = str(source.get("risk") or item.get("risk") or "LOW")
+    color = _mp_map_risk_color(risk, kind)
+    pulse = (math.sin((getattr(self, "_tick", 0) * 0.18) + index) + 1) * .5
+    radius = 5.5 + pulse * 2.4
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol(color, 35)))
+    p.drawEllipse(pt, radius * 4.0, radius * 4.0)
+    p.setBrush(QBrush(qcol(color, 92)))
+    p.drawEllipse(pt, radius * 2.1, radius * 2.1)
+    p.setBrush(QBrush(qcol(color, 236)))
+    p.drawEllipse(pt, radius, radius)
+    p.setPen(QPen(qcol("#eaffff", 210), 1.3))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(pt, radius + 3.6, radius + 3.6)
+    if float(getattr(self, "_security_map_zoom", 1.0) or 1.0) > 2.6 or index < 16:
+        label = str(source.get("city") or source.get("label") or source.get("country") or source.get("ip") or "")[:22]
+        if label:
+            p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            p.setPen(qcol("#dff8ff", 190))
+            p.drawText(QRectF(pt.x() + 9, pt.y() - 10, 140, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+
+def _mp_map_draw_target(self, p: QPainter, rect: QRectF):
+    data = getattr(self, "_security_map_data", {}) or {}
+    target = data.get("target") if isinstance(data, dict) else None
+    if not isinstance(target, dict):
+        # Default MEDPOV target hint near Istanbul when no live API payload exists.
+        target = {"lat": 41.0082, "lng": 28.9784, "url": "medpov.com"}
+    try:
+        pt = _mp_map_project(self, float(target.get("lat")), float(target.get("lng")), rect)
+    except Exception:
+        return
+    if not _mp_map_on_screen(pt, rect, 80):
+        return
+    pulse = (math.sin(getattr(self, "_tick", 0) * .12) + 1) * .5
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol(C.PRI, 48)))
+    p.drawEllipse(pt, 20 + pulse * 9, 20 + pulse * 9)
+    p.setBrush(QBrush(qcol(C.PRI, 220)))
+    p.drawEllipse(pt, 7.0, 7.0)
+    p.setPen(QPen(qcol("#ffffff", 220), 1.6))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(pt, 11.5, 11.5)
+    label = str(target.get("url") or target.get("label") or "Protected website")
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 225))
+    p.drawText(QRectF(pt.x() + 14, pt.y() - 14, 190, 28), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label[:28])
+
+
+def _mp_map_draw_city_labels(self, p: QPainter, rect: QRectF):
+    p.save()
+    p.setClipRect(rect)
+    zoom = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+    p.setFont(QFont("Segoe UI", 7 if zoom < 2 else 8, QFont.Weight.Bold))
+    for idx, (lat, lng, label) in enumerate(_MP_MAP_CITY_LABELS):
+        pt = _mp_map_project(self, lat, lng, rect)
+        if not _mp_map_on_screen(pt, rect, 20):
+            continue
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(C.PRI, 118)))
+        p.drawEllipse(pt, 2.7, 2.7)
+        if zoom > 1.35 or idx < 8:
+            p.setPen(qcol("#a7c6d8", 158))
+            p.drawText(QRectF(pt.x() + 5, pt.y() - 8, 110, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+    p.restore()
+
+
+def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
+    data = getattr(self, "_security_map_data", {}) or {}
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").upper()
+    counts = data.get("counts") if isinstance(data, dict) else {}
+    threat_count = counts.get("threats") if isinstance(counts, dict) else None
+    user_count = counts.get("live_users") if isinstance(counts, dict) else None
+    if threat_count is None:
+        threat_count = len(_mp_map_extract_points(self, "threat"))
+    if user_count is None:
+        user_count = len(_mp_map_extract_points(self, "live"))
+    updated = ""
+    if isinstance(data, dict):
+        updated = str(data.get("updated_at") or data.get("server_time") or "")
+
+    # Top left map badge.
+    badge = QRectF(rect.left() + 18, rect.top() + 16, 365, 76)
+    p.setPen(QPen(qcol(C.PRI, 78), 1))
+    p.setBrush(QBrush(qcol("#061421", 214)))
+    p.drawRoundedRect(badge, 13, 13)
+    p.setFont(QFont("Segoe UI", 10, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 235))
+    p.drawText(QRectF(badge.left() + 16, badge.top() + 11, badge.width() - 28, 22), Qt.AlignmentFlag.AlignLeft, "GLOBAL SECURITY MAP")
+    p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+    p.setPen(qcol(C.TEXT_MED, 210))
+    p.drawText(QRectF(badge.left() + 16, badge.top() + 35, badge.width() - 28, 18), Qt.AlignmentFlag.AlignLeft, f"MODE {mode}  ·  FOCUS {getattr(self, '_security_map_focus_label', 'World')}")
+    p.setPen(qcol(C.TEXT_DIM, 205))
+    p.drawText(QRectF(badge.left() + 16, badge.top() + 53, badge.width() - 28, 18), Qt.AlignmentFlag.AlignLeft, str(getattr(self, "_security_map_notice", ""))[:68])
+
+    # Legend.
+    leg = QRectF(rect.left() + 18, rect.bottom() - 156, 166, 132)
+    p.setPen(QPen(qcol(C.PRI, 72), 1))
+    p.setBrush(QBrush(qcol("#061421", 226)))
+    p.drawRoundedRect(leg, 13, 13)
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 230))
+    p.drawText(QRectF(leg.left() + 14, leg.top() + 12, 140, 18), Qt.AlignmentFlag.AlignLeft, "Threat Level")
+    items = [(C.GREEN, "Live User"), (C.PRI, "Low"), (C.ACC2, "Medium"), ("#ff6b35", "High"), (C.RED, "Critical")]
+    yy = leg.top() + 39
+    p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+    for color, label in items:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(color, 230)))
+        p.drawEllipse(QPointF(leg.left() + 18, yy + 5), 4.2, 4.2)
+        p.setPen(qcol(C.TEXT, 218))
+        p.drawText(QRectF(leg.left() + 31, yy - 2, 120, 18), Qt.AlignmentFlag.AlignLeft, label)
+        yy += 22
+
+    # Bottom right status pill.
+    pill_w = 420 if mode == "BOTH" else 340
+    pill = QRectF(rect.right() - pill_w - 18, rect.bottom() - 54, pill_w, 34)
+    p.setPen(QPen(qcol(C.PRI, 82), 1))
+    p.setBrush(QBrush(qcol("#061421", 226)))
+    p.drawRoundedRect(pill, 13, 13)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol(C.GREEN if mode in {"LIVE", "BOTH"} else C.ACC, 235)))
+    p.drawEllipse(QPointF(pill.left() + 18, pill.center().y()), 4.2, 4.2)
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#eaf8ff", 225))
+    status = f"Map lines active · Threats: {threat_count} · Users: {user_count}"
+    if updated:
+        status += f" · {updated[-8:]}"
+    p.drawText(QRectF(pill.left() + 31, pill.top() + 8, pill.width() - 42, 18), Qt.AlignmentFlag.AlignLeft, status[:76])
+
+
+def _mp_map_draw(self, p: QPainter, w: float, h: float):
+    _mp_map_init(self)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    bg = QRadialGradient(QPointF(w * .52, h * .48), max(w, h) * .76)
+    bg.setColorAt(0, qcol("#071b24", 255))
+    bg.setColorAt(.48, qcol("#06101a", 255))
+    bg.setColorAt(1, qcol("#01050b", 255))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(bg))
+    p.drawRect(0, 0, int(w), int(h))
+
+    rect = QRectF(18, 24, max(80, w - 36), max(80, h - 48))
+    p.setPen(QPen(qcol(C.PRI, 52), 1))
+    p.setBrush(QBrush(qcol("#020812", 76)))
+    p.drawRoundedRect(rect, 18, 18)
+
+    _mp_map_draw_grid(self, p, rect)
+    _mp_map_draw_land(self, p, rect)
+
+    # Subtle red/green atmospheric hotspots.
+    for gx, gy, col, alpha in [(0.21, 0.42, C.ACC, 28), (0.53, 0.42, C.PRI, 34), (0.76, 0.42, C.RED, 24), (0.58, 0.70, C.GREEN, 20)]:
+        g = QRadialGradient(QPointF(rect.left() + rect.width()*gx, rect.top() + rect.height()*gy), rect.width()*0.18)
+        g.setColorAt(0, qcol(col, alpha))
+        g.setColorAt(1, qcol(col, 0))
+        p.setBrush(QBrush(g)); p.setPen(Qt.PenStyle.NoPen); p.drawEllipse(QPointF(rect.left()+rect.width()*gx, rect.top()+rect.height()*gy), rect.width()*0.18, rect.width()*0.18)
+
+    _mp_map_draw_city_labels(self, p, rect)
+
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower()
+    if mode in {"threat", "both", "map", "map-data"}:
+        for tr in _mp_map_extract_traces(self, "threat")[:90]:
+            _mp_map_draw_trace(self, p, rect, tr, "threat")
+    if mode in {"live", "both"}:
+        for tr in _mp_map_extract_traces(self, "live")[:110]:
+            _mp_map_draw_trace(self, p, rect, tr, "live")
+
+    _mp_map_draw_target(self, p, rect)
+
+    if mode in {"threat", "both", "map", "map-data"}:
+        for i, item in enumerate(_mp_map_extract_points(self, "threat")[:80]):
+            _mp_map_draw_point(self, p, rect, item, "threat", i)
+    if mode in {"live", "both"}:
+        for i, item in enumerate(_mp_map_extract_points(self, "live")[:100]):
+            _mp_map_draw_point(self, p, rect, item, "live", i)
+
+    # Center reticle when zoomed to a city.
+    if float(getattr(self, "_security_map_zoom", 1.0) or 1.0) > 3.0:
+        cx, cy = rect.center().x(), rect.center().y()
+        p.setPen(QPen(qcol(C.PRI, 115), 1.0))
+        p.drawLine(QPointF(cx - 18, cy), QPointF(cx + 18, cy))
+        p.drawLine(QPointF(cx, cy - 18), QPointF(cx, cy + 18))
+        p.setPen(QPen(qcol(C.PRI, 74), 1.0))
+        p.drawEllipse(QPointF(cx, cy), 26, 26)
+
+    _mp_map_draw_hud_panel(self, p, rect, w, h)
+
+
+_MPV6_ORIGINAL_HUD_PAINT = getattr(HudCanvas, "paintEvent", None)
+
+def _mpv6_hud_paint_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)):
+        p = QPainter(self)
+        _mp_map_draw(self, p, float(self.width()), float(self.height()))
+        p.end()
+        return
+    if _MPV6_ORIGINAL_HUD_PAINT:
+        return _MPV6_ORIGINAL_HUD_PAINT(self, event)
+
+
+def _mpv6_start_security_map_now(self, payload):
+    payload = payload if isinstance(payload, dict) else {}
+    try:
+        self.hud.start_security_map_mode(
+            mode=payload.get("mode") or "world",
+            map_data=payload.get("data") if isinstance(payload.get("data"), dict) else {},
+            focus=payload.get("focus") or "",
+        )
+        self._apply_state("MAP")
+        mode = str(payload.get("mode") or "world").upper()
+        self._log.append_log(f"SYS: SECURITY MAP online · {mode}.")
+    except Exception as exc:
+        self._log.append_log(f"ERR: Security map could not open — {exc}")
+
+
+def _mpv6_focus_security_map_now(self, place):
+    try:
+        ok = self.hud.focus_security_map(str(place or ""))
+        self._log.append_log(f"SYS: Security map focus {'updated' if ok else 'not found'} · {place}.")
+    except Exception as exc:
+        self._log.append_log(f"ERR: Security map focus failed — {exc}")
+
+
+def _mpv6_stop_security_map_now(self):
+    try:
+        was_open = bool(self.hud.security_map_is_open())
+    except Exception:
+        was_open = False
+    try:
+        self.hud.stop_security_map_mode()
+    except Exception:
+        pass
+    if was_open:
+        self._log.append_log("SYS: SECURITY MAP offline.")
+
+
+def _mpv6_start_security_map(self, mode="world", data=None, focus=""):
+    self._map_start_sig.emit({"mode": mode, "data": data or {}, "focus": focus or ""})
+    return True
+
+
+def _mpv6_focus_security_map(self, place: str):
+    self._map_focus_sig.emit(str(place or ""))
+    return True
+
+
+def _mpv6_stop_security_map(self):
+    self._map_stop_sig.emit()
+    return True
+
+
+def _mpv6_jarvis_open_security_map(self, mode="world", data=None, focus=""):
+    return self._win.start_security_map(mode=mode, data=data or {}, focus=focus or "")
+
+
+def _mpv6_jarvis_focus_security_map(self, place: str):
+    return self._win.focus_security_map(place)
+
+
+def _mpv6_jarvis_stop_security_map(self):
+    return self._win.stop_security_map()
+
+try:
+    HudCanvas.start_security_map_mode = _mp_map_start
+    HudCanvas.stop_security_map_mode = _mp_map_stop
+    HudCanvas.focus_security_map = _mp_map_focus
+    HudCanvas.security_map_is_open = _mp_map_is_open
+    HudCanvas.paintEvent = _mpv6_hud_paint_event
+
+    MainWindow._start_security_map_now = _mpv6_start_security_map_now
+    MainWindow._focus_security_map_now = _mpv6_focus_security_map_now
+    MainWindow._stop_security_map_now = _mpv6_stop_security_map_now
+    MainWindow.start_security_map = _mpv6_start_security_map
+    MainWindow.focus_security_map = _mpv6_focus_security_map
+    MainWindow.stop_security_map = _mpv6_stop_security_map
+
+    JarvisUI.open_security_map = _mpv6_jarvis_open_security_map
+    JarvisUI.start_security_map = _mpv6_jarvis_open_security_map
+    JarvisUI.focus_security_map = _mpv6_jarvis_focus_security_map
+    JarvisUI.stop_security_map = _mpv6_jarvis_stop_security_map
+    JarvisUI.close_security_map = _mpv6_jarvis_stop_security_map
+except Exception as _mpv6_map_patch_error:
+    try:
+        print("[FRIDAY UI] security map patch install error:", _mpv6_map_patch_error)
+    except Exception:
+        pass
+
+# === /MEDPOV FRIDAY UI V6 SECURITY CENTER GLOBAL MAP HUD ===

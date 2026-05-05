@@ -1,5 +1,11 @@
-﻿{
-  "base_url": "https://siteadi.com/security-center",
+{
+  "api_url": "https://siteadi.com/security-center/admin/api/remote-access.php",
   "api_key": "",
-  "endpoint": "/admin/api/remote-access.php"
+  "timeout": 25,
+  "map_defaults": {
+    "mode": "both",
+    "threat_range": "24h",
+    "live_range": "live",
+    "include_curve_points": true
+  }
 }

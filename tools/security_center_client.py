@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -61,7 +61,14 @@ class SecurityCenterClient:
         action = (action or "overview").strip()
         method = (method or "GET").upper().strip()
         payload = {"action": action, **{k: v for k, v in params.items() if v is not None and v != ""}}
-        headers = {"Accept": "application/json", "X-MEDPOV-API-Key": self.api_key, "User-Agent": "MEDPOV-Friday/SecurityCenterClient"}
+        headers = {
+            "Accept": "application/json",
+            "Authorization": "Bearer " + self.api_key if self.api_key else "",
+            "X-MEDPOV-API-Key": self.api_key,
+            "User-Agent": "MEDPOV-Friday/SecurityCenterClient/2.8.7",
+        }
+        if not self.api_key:
+            headers.pop("Authorization", None)
         if method == "POST":
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             headers["Content-Type"] = "application/json; charset=utf-8"
@@ -102,6 +109,31 @@ class SecurityCenterClient:
     def login(self, limit: int = 25) -> Dict[str, Any]: return self.request("login", limit=limit)
     def health(self) -> Dict[str, Any]: return self.request("health")
     def settings(self) -> Dict[str, Any]: return self.request("settings")
+    def map(self, mode: str = "both", threat_range: str = "24h", live_range: str = "live", include_curve_points: bool = True) -> Dict[str, Any]:
+        return self.request(
+            "map",
+            mode=mode,
+            threat_range=threat_range,
+            live_range=live_range,
+            include_curve_points="1" if include_curve_points else "0",
+        )
+
+    def threat_map(self, threat_range: str = "24h", include_curve_points: bool = True) -> Dict[str, Any]:
+        return self.request("threat-map", threat_range=threat_range, include_curve_points="1" if include_curve_points else "0")
+
+    def live_map(self, live_range: str = "live", include_curve_points: bool = True) -> Dict[str, Any]:
+        return self.request("live-map", live_range=live_range, include_curve_points="1" if include_curve_points else "0")
+
+    def both_map(self, threat_range: str = "24h", live_range: str = "live", include_curve_points: bool = True) -> Dict[str, Any]:
+        return self.request(
+            "both-map",
+            threat_range=threat_range,
+            live_range=live_range,
+            include_curve_points="1" if include_curve_points else "0",
+        )
+
+    def raw_action(self, action: str, method: str = "GET", **params: Any) -> Dict[str, Any]:
+        return self.request(action, method=method, **params)
     def block_ip(self, ip: str, minutes: int = 1440, reason: str = "MEDPOV Friday remote block") -> Dict[str, Any]: return self.request("block-ip", method="POST", ip=ip, minutes=minutes, reason=reason)
     def allow_ip(self, ip: str, reason: str = "MEDPOV Friday remote allow") -> Dict[str, Any]: return self.request("allow-ip", method="POST", ip=ip, minutes=0, reason=reason)
     def ignore_ip(self, ip: str, reason: str = "MEDPOV Friday remote ignore") -> Dict[str, Any]: return self.request("ignore-ip", method="POST", ip=ip, minutes=0, reason=reason)
@@ -127,8 +159,12 @@ def main(argv: list[str]) -> int:
     elif cmd == "block" and len(argv) > 2: _print_json(c.block_ip(argv[2], reason="Friday CLI requested block"))
     elif cmd == "health": _print_json(c.health())
     elif cmd == "live": _print_json(c.live())
+    elif cmd == "map": _print_json(c.map(mode=(argv[2] if len(argv) > 2 else 'both')))
+    elif cmd == "threat-map": _print_json(c.threat_map())
+    elif cmd == "live-map": _print_json(c.live_map())
+    elif cmd == "both-map": _print_json(c.both_map())
     else:
-        print("Usage: python security_center_client.py [ping|overview|threats|ip <IP>|analyze <IP>|event <ID>|block <IP>|health|live]", file=sys.stderr)
+        print("Usage: python security_center_client.py [ping|overview|threats|ip <IP>|analyze <IP>|event <ID>|block <IP>|health|live|map|threat-map|live-map|both-map]", file=sys.stderr)
         return 2
     return 0
 

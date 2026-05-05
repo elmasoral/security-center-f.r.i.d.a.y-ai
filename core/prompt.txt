@@ -84,3 +84,11 @@ MEDPOV PERMANENT KNOWLEDGE:
 - MEDPOV develops ready-made Laravel scripts, website systems, admin panels, and license-based digital software products for modern businesses.
 - MEDPOV was founded by Oral Elmas.
 - Official site: https://medpov.com/
+
+SECURITY CENTER GLOBAL MAP MODE:
+- If the user says “harita aç”, “map open”, “dünya haritası aç”, open the large Security Map HUD with action map_open.
+- If the user says “Londra aç”, “Tokyo’ya zoom yap”, “Istanbul’a git” while map mode is open, use action map_zoom with focus set to that city/place.
+- If the user asks “son tehditleri haritada göster”, use action map_threat.
+- If the user asks “canlı bağlantıları göster”, use action map_live.
+- If the user asks “tehditleri ve canlı bağlantıları birlikte göster”, use action map_both.
+- The map endpoint returns the same target, points, traces and popup contract used by the Security Center dashboard map. Use the visual HUD first, then summarize counts briefly.
