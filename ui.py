@@ -4126,3 +4126,150 @@ except Exception as _mpv4_patch_error:
         pass
 
 # === /MEDPOV FRIDAY UI V4 RESPONSIVE CENTER CORE FIX ===
+# === MEDPOV FRIDAY UI V5 SPLIT SETTINGS + PC WORKSPACE PANEL ===
+# Amaç:
+# - Sağ paneldeki FRIDAY Settings kartını daraltıp ikiye böler.
+# - Sol kart: FRIDAY AI/voice/security ayarları.
+# - Sağ kart: PC Settings / trusted folders / backup workspace.
+
+
+def _mpv5_open_pc_settings_dialog(self):
+    try:
+        from tools.friday_pc_settings_dialog import FridayPCSettingsDialog
+        dlg = FridayPCSettingsDialog(self)
+        dlg.exec()
+        try:
+            if hasattr(self, "write_log"):
+                self.write_log("FRIDAY: PC Settings güncellendi. Güvenilir klasörler ve backup ayarları yenilendi.")
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            if hasattr(self, "write_log"):
+                self.write_log(f"ERR: PC Settings paneli açılamadı — {e}")
+        except Exception:
+            pass
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "PC Settings", str(e))
+        except Exception:
+            print("FRIDAY PC settings dialog error:", e)
+
+
+def _mpv5_build_mini_setting_card(title: str, desc: str, button_text: str, accent: str, on_click) -> QFrame:
+    card = QFrame()
+    card.setObjectName("Mpv5MiniSettingCard")
+    card.setStyleSheet(f"""
+        QFrame#Mpv5MiniSettingCard {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                stop:0 rgba(7, 24, 38, 0.96),
+                stop:1 rgba(5, 12, 22, 0.98));
+            border: 1px solid rgba(40, 233, 255, 0.22);
+            border-radius: 14px;
+        }}
+        QFrame#Mpv5MiniSettingCard QLabel {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame#Mpv5MiniSettingCard QPushButton {{
+            background: rgba(8, 31, 50, 0.82);
+            color: #e8f8ff;
+            border: 1px solid rgba(40, 233, 255, 0.28);
+            border-radius: 9px;
+            padding: 6px 8px;
+            font-weight: 900;
+        }}
+        QFrame#Mpv5MiniSettingCard QPushButton:hover {{
+            background: rgba(18, 55, 76, 0.98);
+            border-color: {accent};
+            color: #ffffff;
+        }}
+    """)
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(10, 10, 10, 10)
+    lay.setSpacing(6)
+
+    head = QLabel(title)
+    head.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    head.setStyleSheet(f"color:{accent}; letter-spacing:.7px;")
+    head.setWordWrap(True)
+
+    info = QLabel(desc)
+    info.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+    info.setStyleSheet(f"color:{C.TEXT_DIM};")
+    info.setWordWrap(True)
+    info.setMinimumHeight(34)
+
+    btn = QPushButton(button_text)
+    btn.setFixedHeight(28)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.clicked.connect(on_click)
+
+    lay.addWidget(head)
+    lay.addWidget(info)
+    lay.addStretch(1)
+    lay.addWidget(btn)
+    return card
+
+
+def _mpv5_build_friday_settings_panel(self):
+    box = QFrame()
+    box.setObjectName("Mpv5SplitSettingsPanel")
+    box.setStyleSheet(f"""
+        QFrame#Mpv5SplitSettingsPanel {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                stop:0 rgba(20, 12, 5, 0.60),
+                stop:0.45 rgba(4, 18, 30, 0.92),
+                stop:1 rgba(3, 10, 20, 0.98));
+            border: 1px solid rgba(255, 184, 107, 0.24);
+            border-radius: 16px;
+        }}
+        QFrame#Mpv5SplitSettingsPanel QLabel {{
+            background: transparent;
+            border: none;
+        }}
+    """)
+    outer = QVBoxLayout(box)
+    outer.setContentsMargins(10, 10, 10, 10)
+    outer.setSpacing(8)
+
+    top = QHBoxLayout()
+    top.setContentsMargins(0, 0, 0, 0)
+    top.setSpacing(8)
+
+    left = _mpv5_build_mini_setting_card(
+        "FRIDAY",
+        "AI provider, ses, Security Center ve model ayarları.",
+        "Ayarları Aç",
+        getattr(C, "ACC2", "#ffb86b"),
+        lambda _=False: self._open_friday_settings_dialog(),
+    )
+    right = _mpv5_build_mini_setting_card(
+        "PC SETTINGS",
+        "Trusted folders, backup, zip, note, screenshot yetkileri.",
+        "PC Ayarları",
+        getattr(C, "PRI", "#28e9ff"),
+        lambda _=False: self._open_pc_settings_dialog(),
+    )
+    top.addWidget(left, stretch=1)
+    top.addWidget(right, stretch=1)
+    outer.addLayout(top)
+
+    status = QLabel("PC Workspace: klasör ekle → FRIDAY kopyalar, zipler, yedekler, not alır ve ekran görüntüsü kaydeder.")
+    status.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+    status.setWordWrap(True)
+    status.setStyleSheet(f"color:{C.TEXT_DIM}; padding: 0 2px 1px 2px;")
+    outer.addWidget(status)
+    return box
+
+
+try:
+    MainWindow._open_pc_settings_dialog = _mpv5_open_pc_settings_dialog
+    MainWindow._build_friday_settings_panel = _mpv5_build_friday_settings_panel
+except Exception as _mpv5_settings_patch_error:
+    try:
+        print("[FRIDAY UI] split settings patch install error:", _mpv5_settings_patch_error)
+    except Exception:
+        pass
+
+# === /MEDPOV FRIDAY UI V5 SPLIT SETTINGS + PC WORKSPACE PANEL ===

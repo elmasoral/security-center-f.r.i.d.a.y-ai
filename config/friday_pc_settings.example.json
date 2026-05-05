@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "mode": "trusted_paths",
+  "trusted_paths": [
+    "C:\\MEDPOV",
+    "C:\\wamp64\\www"
+  ],
+  "backup_root": "C:\\Users\\YOUR_USER\\Documents\\MEDPOV_FRIDAY_Backups",
+  "screenshots_root": "C:\\Users\\YOUR_USER\\Pictures\\MEDPOV_FRIDAY_Screenshots",
+  "notes_root": "C:\\Users\\YOUR_USER\\Documents\\MEDPOV_FRIDAY_Notes",
+  "allow_write": true,
+  "allow_delete_to_trash": true,
+  "allow_app_control": true,
+  "allow_screenshot": true,
+  "zip_exclude_dirs": [".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "storage/logs"],
+  "zip_exclude_exts": [".pyc", ".log", ".tmp"]
+}

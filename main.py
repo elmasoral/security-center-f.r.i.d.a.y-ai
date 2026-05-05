@@ -36,6 +36,7 @@ from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
+from actions.pc_workspace      import pc_workspace
 from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
@@ -305,18 +306,44 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+        "description": "Manages files and folders in safe/trusted locations: list, create, delete, move, copy, zip, backup, rename, read, write, find, disk usage. Uses PC Settings trusted paths when available.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
-                "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
-                "destination": {"type": "STRING", "description": "Destination path for move/copy"},
+                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | zip | backup | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
+                "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home, backups, screenshots, notes, or configured trusted folder"},
+                "destination": {"type": "STRING", "description": "Destination path for move/copy/zip"},
+                "archive_name": {"type": "STRING", "description": "Optional zip archive name"},
                 "new_name":    {"type": "STRING", "description": "New name for rename"},
                 "content":     {"type": "STRING", "description": "Content for create_file/write"},
-                "name":        {"type": "STRING", "description": "File name to search for"},
+                "name":        {"type": "STRING", "description": "File name to search for or operate on"},
                 "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
                 "count":       {"type": "INTEGER", "description": "Number of results for largest"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "pc_workspace",
+        "description": (
+            "MEDPOV FRIDAY PC Workspace. Use for configured PC folders, project backups, zip archives, copying files, screenshots, quick notes, opening trusted folders/files, opening Word/Notepad, and disk checks. "
+            "Prefer this tool when the user says PC Settings, güvenilir klasör, proje klasörü, yedekle, zip yap, kopyala, ekran görüntüsü al, not al, Word aç, Notepad aç. "
+            "File operations are allowed only inside folders added in the PC Settings panel."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "status | list_paths | add_path | remove_path | list | tree | copy | zip | backup | note | screenshot | open_path | open_word | open_notepad | disk_usage"},
+                "path": {"type": "STRING", "description": "Path, trusted folder, or shortcut: desktop, downloads, documents, backups, screenshots, notes"},
+                "name": {"type": "STRING", "description": "Optional file/folder name inside path"},
+                "destination": {"type": "STRING", "description": "Destination folder for copy/zip"},
+                "archive_name": {"type": "STRING", "description": "Optional zip archive name"},
+                "title": {"type": "STRING", "description": "Note/document title"},
+                "text": {"type": "STRING", "description": "Text to write/paste"},
+                "content": {"type": "STRING", "description": "Note or document content"},
+                "depth": {"type": "INTEGER", "description": "Folder tree depth"},
+                "max_items": {"type": "INTEGER", "description": "Max listed items"},
+                "open_after": {"type": "BOOLEAN", "description": "Open note after creating it"}
             },
             "required": ["action"]
         }
@@ -2198,6 +2225,10 @@ class JarvisLive:
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "pc_workspace":
+                r = await loop.run_in_executor(None, lambda: pc_workspace(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "send_message":

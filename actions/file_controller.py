@@ -1,6 +1,7 @@
 import os
 import shutil
 import platform
+import zipfile
 from pathlib import Path
 from datetime import datetime
 
@@ -12,17 +13,43 @@ except ImportError:
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
+try:
+    from tools.friday_pc_settings_store import (
+        get_trusted_paths,
+        is_path_allowed,
+        load_pc_settings,
+        resolve_named_path,
+    )
+except Exception:
+    get_trusted_paths = None
+    is_path_allowed = None
+    load_pc_settings = None
+    resolve_named_path = None
+
 _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
+def _configured_safe_roots() -> list[Path]:
+    roots = list(_SAFE_ROOTS)
+    if get_trusted_paths:
+        try:
+            for root in get_trusted_paths(include_output_roots=True):
+                if root not in roots:
+                    roots.append(root)
+        except Exception:
+            pass
+    return roots
+
 def _is_safe_path(target: Path) -> bool:
-    """Verilen path _SAFE_ROOTS içinde mi? Değilse işlemi reddet."""
+    """Verilen path güvenilir köklerden birinin içinde mi?"""
     try:
+        if is_path_allowed and is_path_allowed(target):
+            return True
         resolved = target.resolve()
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in _SAFE_ROOTS
+            for root in _configured_safe_roots()
         )
     except Exception:
         return False
@@ -80,10 +107,12 @@ def _resolve_path(raw: str) -> Path:
         "videos":    _get_videos(),
         "home":      Path.home(),
     }
-    lower = raw.strip().lower()
+    lower = str(raw or "").strip().lower()
+    if resolve_named_path and lower in {"backups", "backup", "screenshots", "screenshot", "notes", "note"}:
+        return resolve_named_path(lower)
     if lower in shortcuts:
         return shortcuts[lower]
-    return Path(raw).expanduser()
+    return Path(str(raw or "")).expanduser()
 
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -443,6 +472,69 @@ def organize_desktop() -> str:
         return f"Could not organize desktop: {e}"
 
 
+
+def _zip_excludes() -> tuple[set[str], set[str]]:
+    try:
+        settings = load_pc_settings() if load_pc_settings else {}
+        dirs = {str(x).replace("\\", "/").strip("/").lower() for x in settings.get("zip_exclude_dirs", [])}
+        exts = {str(x).lower() for x in settings.get("zip_exclude_exts", [])}
+        return dirs, exts
+    except Exception:
+        return {".git", "node_modules", "vendor", "__pycache__", ".venv", "venv"}, {".pyc", ".log", ".tmp"}
+
+
+def zip_file(path: str, name: str = "", destination: str = "backups", archive_name: str = "") -> str:
+    try:
+        base = _resolve_path(path)
+        src = (base / name) if name else base
+        if not _is_safe_path(src):
+            return f"Access denied (source): {src}"
+        if not src.exists():
+            return f"Source not found: {src}"
+
+        dst_dir = _resolve_path(destination or "backups")
+        if not _is_safe_path(dst_dir):
+            return f"Access denied (destination): {dst_dir}"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_name = archive_name.strip() if archive_name else f"{src.stem or src.name}_{stamp}.zip"
+        if not zip_name.lower().endswith(".zip"):
+            zip_name += ".zip"
+        zip_path = dst_dir / zip_name
+
+        exclude_dirs, exclude_exts = _zip_excludes()
+        files = []
+        if src.is_file():
+            files.append((src, src.name))
+        else:
+            for item in src.rglob("*"):
+                if not item.is_file():
+                    continue
+                rel = item.relative_to(src)
+                rel_norm = str(rel).replace("\\", "/").lower()
+                parts = [part.lower() for part in rel.parts]
+                if any(part in exclude_dirs for part in parts):
+                    continue
+                if any(rel_norm == ex or rel_norm.startswith(ex + "/") for ex in exclude_dirs):
+                    continue
+                if item.suffix.lower() in exclude_exts:
+                    continue
+                files.append((item, str(rel)))
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file, rel in files:
+                zf.write(file, rel)
+
+        return f"ZIP created: {zip_path}\nFiles: {len(files)}\nSize: {_format_size(zip_path.stat().st_size)}"
+    except Exception as e:
+        return f"Could not create zip: {e}"
+
+
+def backup_path(path: str, name: str = "", archive_name: str = "") -> str:
+    return zip_file(path=path, name=name, destination="backups", archive_name=archive_name)
+
+
 def get_file_info(path: str, name: str = "") -> str:
     try:
         base   = _resolve_path(path)
@@ -499,6 +591,21 @@ def file_controller(
 
         elif action == "copy":
             return copy_file(path, name=name, destination=params.get("destination", ""))
+
+        elif action == "zip":
+            return zip_file(
+                path=path,
+                name=name,
+                destination=params.get("destination", "backups"),
+                archive_name=params.get("archive_name", ""),
+            )
+
+        elif action == "backup":
+            return backup_path(
+                path=path,
+                name=name,
+                archive_name=params.get("archive_name", ""),
+            )
 
         elif action == "rename":
             return rename_file(path, name=name, new_name=params.get("new_name", ""))
