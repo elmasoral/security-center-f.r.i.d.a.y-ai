@@ -682,7 +682,6 @@ class JarvisLive:
         self._openai_camera_turn_id = -1
         self._openai_last_camera_result = ""
         self._openai_audio_drain_reports = set()
-        self._openai_local_mode_handled_until = 0.0
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -816,7 +815,6 @@ class JarvisLive:
             "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
             "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
-            "FRIDAY runtime commands are NOT computer settings. If the user says standby, stand by, bekleme moduna geç, bekleme modunu aktif et, dinlemeyi durdur, or sleep mode, do not call computer_settings; switch to standby/listening state only.",
             "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
             "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
             "If the user asks to evaluate FRIDAY's voice, microphone, speaker, or sound quality, do not use the camera; answer briefly or ask for an audio-specific detail.",
@@ -1148,8 +1146,7 @@ class JarvisLive:
         self._openai_executed_tool_calls = seen
         self.ui.set_state("THINKING")
         print(f"[OpenAI RT] 🔧 {name} {args}")
-        local_mode_output = self._handle_realtime_mode_tool_action(name, args, source="openai-tool")
-        output = local_mode_output or self._openai_should_skip_tool_loop(name, args) or "Done."
+        output = self._openai_should_skip_tool_loop(name, args) or "Done."
         try:
             if output != "Done.":
                 pass
@@ -1187,11 +1184,6 @@ class JarvisLive:
                 "output": json.dumps({"result": output, "instruction": "Bu tool sonucuna göre kullanıcıya kısa ve doğal cevap ver. Aynı tool'u tekrar çağırma."}, ensure_ascii=False),
             },
         }, ensure_ascii=False))
-        if local_mode_output and self.ui.standby:
-            self._openai_pending_response_after_tool = False
-            self._openai_realtime_stop_audio()
-            self.ui.set_state("STANDBY")
-            return
         await self._openai_send_response_create(ws, after_tool=True)
 
     def _maybe_tool_from_output_item(self, event: dict) -> tuple[str, dict, str] | None:
@@ -1220,11 +1212,7 @@ class JarvisLive:
         sample_rate = 24000
 
         def callback(indata, frames, time_info, status):
-            if self.ui.muted:
-                return
-            data = indata.tobytes()
-            if self.ui.standby:
-                self._handle_standby_audio_gate(indata, data, loop)
+            if self.ui.muted or self.ui.standby:
                 return
             with self._speaking_lock:
                 speaking = self._is_speaking
@@ -1232,6 +1220,7 @@ class JarvisLive:
             # Keep mic quiet while FRIDAY is talking; text commands still work.
             if speaking:
                 return
+            data = indata.tobytes()
             b64 = base64.b64encode(data).decode("ascii")
             def _safe_push():
                 try:
@@ -1445,17 +1434,6 @@ class JarvisLive:
                 self._openai_audio_bytes_played = 0
                 assistant_parts = []
                 text_parts = []
-                if time.time() < float(getattr(self, "_openai_local_mode_handled_until", 0.0) or 0.0):
-                    try:
-                        await ws.send(json.dumps({"type": "response.cancel"}, ensure_ascii=False))
-                    except Exception:
-                        pass
-                    self._openai_response_active = False
-                    self._openai_active_response_id = ""
-                    self._openai_realtime_stop_audio()
-                    if self.ui.standby:
-                        self.ui.set_state("STANDBY")
-                    continue
                 continue
 
             if etype in {"response.cancelled", "response.canceled"}:
@@ -1465,9 +1443,6 @@ class JarvisLive:
                 continue
 
             if etype == "input_audio_buffer.speech_started":
-                if self.ui.standby:
-                    self.ui.set_state("STANDBY")
-                    continue
                 # Let the user barge in naturally: stop any queued assistant
                 # audio as soon as the server detects new speech. If a response
                 # is still active, cancel it before the next turn to prevent the
@@ -1497,23 +1472,6 @@ class JarvisLive:
                         self._openai_user_turn_id = int(getattr(self, "_openai_user_turn_id", 0) or 0) + 1
                         self._openai_current_turn_tools = set()
                         self.ui.write_log(f"You: {txt}")
-
-                        # Hard local mode commands must win over Realtime model/tool routing.
-                        # Without this, "bekleme moduna geç" can be routed as
-                        # computer_settings(action=standby), which is not an OS action.
-                        if self._handle_friday_mode_command(txt, source="openai-voice"):
-                            self._openai_local_mode_handled_until = time.time() + 2.5
-                            self._openai_pending_response_after_tool = False
-                            self._openai_realtime_stop_audio()
-                            if bool(getattr(self, "_openai_response_active", False)):
-                                try:
-                                    await ws.send(json.dumps({"type": "response.cancel"}, ensure_ascii=False))
-                                except Exception:
-                                    pass
-                                self._openai_response_active = False
-                                self._openai_active_response_id = ""
-                            if self.ui.standby:
-                                self.ui.set_state("STANDBY")
                 continue
 
             if etype in {"response.audio.delta", "response.output_audio.delta"}:
@@ -1915,40 +1873,6 @@ class JarvisLive:
         ).start()
         return True
 
-    def _mode_command_kind(self, text: str) -> str | None:
-        """Detect hard local FRIDAY mode commands before any AI/tool routing.
-
-        These commands must never be treated as normal computer_settings actions.
-        They change FRIDAY's own microphone/listening state immediately.
-        """
-        t = self._norm_text(text)
-        if not t:
-            return None
-
-        standby_phrases = (
-            "/standby", "/bekleme",
-            "standby", "standby mode", "standby mod", "stand by", "stand by mode", "stand by modu",
-            "bekleme modu", "bekleme moduna", "bekleme modunu", "bekleme modunu aktif",
-            "bekleme moduna gec", "bekleme moduna gir", "bekleme moduna al",
-            "beklemeye gec", "beklemeye al", "beni beklemeye al",
-            "dinlemeyi durdur", "sesli dinlemeyi durdur", "mikrofon dinlemeyi durdur",
-            "uyku moduna gec", "uyku modu", "sleep mode", "go standby", "go to standby",
-        )
-        wake_phrases = (
-            "/wake", "/dinle",
-            "wake", "wake up", "wake friday", "wake medpov",
-            "hey friday", "hey medpov", "hey med pov",
-            "dinleme moduna gec", "dinleme modunu aktif", "dinlemeye gec",
-            "beni dinle", "tekrar dinle", "aktif dinleme", "listening mode",
-        )
-
-        # Wake should win for explicit wake-word phrases such as "hey friday".
-        if any(p in t for p in wake_phrases):
-            return "wake"
-        if any(p in t for p in standby_phrases):
-            return "standby"
-        return None
-
     def _handle_friday_mode_command(self, text: str, source: str = "text") -> bool:
         t = self._norm_text(text)
         if not t:
@@ -1959,14 +1883,23 @@ class JarvisLive:
             self._set_camera_mode_local(camera_action, source=source)
             return True
 
-        mode_kind = self._mode_command_kind(t)
+        standby_phrases = (
+            "/standby", "/bekleme", "standby", "standby mode",
+            "bekleme moduna gec", "beklemeye gec", "beklemeye al",
+            "dinlemeyi durdur", "sesli dinlemeyi durdur", "uyku moduna gec"
+        )
+        wake_phrases = (
+            "/wake", "/dinle", "wake", "wake up",
+            "hey friday", "hey medpov", "hey med pov",
+            "dinleme moduna gec", "dinlemeye gec", "beni dinle", "tekrar dinle"
+        )
 
-        if mode_kind == "standby":
+        if any(p in t for p in standby_phrases):
             self.ui.set_standby(True)
-            self.ui.write_log("SYS: Bekleme modu aktif. Yazılı komutlar çalışır; mikrofon girişi standby kapısına alındı.")
+            self.ui.write_log("SYS: Bekleme modu aktif. Yazılı komutlar çalışır; Gemini mikrofon girişi durduruldu.")
             return True
 
-        if mode_kind == "wake":
+        if any(p in t for p in wake_phrases):
             if self.ui.muted:
                 self.ui.muted = False
             self.ui.set_standby(False)
@@ -1975,36 +1908,6 @@ class JarvisLive:
 
         return False
 
-    def _handle_realtime_mode_tool_action(self, name: str, args: dict, source: str = "tool") -> str | None:
-        """Catch model-routed standby/wake calls before computer_settings.
-
-        In Realtime voice mode the model may incorrectly call:
-        computer_settings({"action":"standby"}). That action is not an OS setting;
-        it is FRIDAY's own runtime mode. Handle it here so the UI immediately turns
-        orange and microphone audio is gated.
-        """
-        if str(name or "").strip() != "computer_settings":
-            return None
-        args = dict(args or {})
-        merged = " ".join(
-            str(args.get(k) or "")
-            for k in ("action", "description", "value", "text", "command")
-        ).strip()
-        mode_kind = self._mode_command_kind(merged)
-        if mode_kind == "standby":
-            self._openai_local_mode_handled_until = time.time() + 2.5
-            self._suppress_model_output(4.0)
-            self._openai_realtime_stop_audio()
-            self.ui.set_standby(True)
-            return "Standby mode active. Stay completely silent. Do not call any other tool."
-        if mode_kind == "wake":
-            self._openai_local_mode_handled_until = time.time() + 1.0
-            self._suppress_model_output(1.5)
-            if self.ui.muted:
-                self.ui.muted = False
-            self.ui.set_standby(False)
-            return "Listening mode active. Give a very short acknowledgement only if needed."
-        return None
 
     def _handle_security_center_direct_command(self, text: str) -> bool:
         raw = (text or "").strip()
@@ -2020,10 +1923,7 @@ class JarvisLive:
             except Exception as e:
                 self.ui.write_log(f"ERR: Security Center command failed — {e}")
             finally:
-                if self.ui.standby:
-                    self.ui.set_state("STANDBY")
-                elif not self.ui.muted:
-                    self.ui.set_state("LISTENING")
+                if not self.ui.muted: self.ui.set_state("LISTENING")
         threading.Thread(target=_worker, daemon=True).start()
         return True
 
