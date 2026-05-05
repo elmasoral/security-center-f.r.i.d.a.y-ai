@@ -658,6 +658,8 @@ class JarvisLive:
         self._openai_assistant_buf = []
         self._openai_last_user_norm = ""
         self._openai_last_user_ts = 0.0
+        self._openai_session_update_ok = False
+        self._openai_session_update_retry = 0
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -790,7 +792,9 @@ class JarvisLive:
             "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center.",
             "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
-            "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center. For visual questions about the user's hand/object/room, call screen_process with angle='camera'.",
+            "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
+            "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
+            "Never invent camera observations. Only describe the camera/screen after screen_process returns a result.",
             "When a tool returns a direct result, summarize it in a short human sentence.",
             f"Current date/time: {now}.",
             FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION,
@@ -800,30 +804,79 @@ class JarvisLive:
             parts.append(mem_str)
         return "\n\n".join(p for p in parts if p)
 
-    def _openai_realtime_session_update(self) -> dict:
+    def _openai_realtime_session_update(self, legacy: bool = False) -> dict:
+        """Build a Realtime session.update payload.
+
+        OpenAI's GA Realtime websocket currently rejects `session.type` on some
+        deployments even though a few generated docs/examples still show it.
+        Do not send `session.type`. Also use the GA audio/output_modalities
+        shape so audio deltas are actually emitted instead of text-only output.
+
+        If a deployment rejects the GA nested `audio` shape, the recv loop can
+        retry once with the older flat field names by passing legacy=True.
+        """
+        lang = "tr" if FRIDAY_RESPONSE_LANGUAGE == "tr" else "en"
+        voice = self._openai_realtime_voice()
+
+        if legacy:
+            return {
+                "type": "session.update",
+                "session": {
+                    # Legacy beta shape: intentionally no session.type.
+                    "instructions": self._openai_realtime_instructions(),
+                    "voice": voice,
+                    "output_modalities": ["audio"],
+                    "input_audio_format": "pcm16",
+                    "output_audio_format": "pcm16",
+                    "input_audio_transcription": {
+                        "model": "gpt-4o-mini-transcribe",
+                        "language": lang,
+                    },
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.52,
+                        "prefix_padding_ms": 260,
+                        "silence_duration_ms": 620,
+                        "create_response": True,
+                        "interrupt_response": True,
+                    },
+                    "tools": self._to_openai_realtime_tools(),
+                    "tool_choice": "auto",
+                },
+            }
+
         return {
             "type": "session.update",
             "session": {
-                "type": "realtime",
-                "modalities": ["text", "audio"],
+                # GA shape. Do not include `type: realtime`; some endpoints
+                # answer with: Unknown parameter: 'session.type'.
                 "instructions": self._openai_realtime_instructions(),
-                "voice": self._openai_realtime_voice(),
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
-                "input_audio_transcription": {
-                    "model": "gpt-4o-mini-transcribe",
-                    "language": "tr" if FRIDAY_RESPONSE_LANGUAGE == "tr" else "en",
-                },
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.52,
-                    "prefix_padding_ms": 260,
-                    "silence_duration_ms": 620,
-                    "create_response": True,
-                    "interrupt_response": True,
+                "output_modalities": ["audio"],
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "noise_reduction": {"type": "near_field"},
+                        "transcription": {
+                            "model": "gpt-4o-mini-transcribe",
+                            "language": lang,
+                        },
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": 0.52,
+                            "prefix_padding_ms": 260,
+                            "silence_duration_ms": 620,
+                            "create_response": True,
+                            "interrupt_response": True,
+                        },
+                    },
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "voice": voice,
+                    },
                 },
                 "tools": self._to_openai_realtime_tools(),
                 "tool_choice": "auto",
+                "max_output_tokens": 900,
             },
         }
 
@@ -850,6 +903,38 @@ class JarvisLive:
         except Exception:
             return False
 
+    def _openai_request_audio_response(self) -> dict:
+        # GA Realtime uses output_modalities. Audio output includes a transcript,
+        # so requesting both text and audio is invalid on current models.
+        return {"type": "response.create", "response": {"output_modalities": ["audio"]}}
+
+    def _openai_retry_session_update_from_error(self, msg: str) -> bool:
+        """Retry session.update once if the endpoint rejects a schema field.
+
+        This keeps FRIDAY usable across Realtime GA/Beta schema differences
+        without reconnect loops.
+        """
+        if getattr(self, "_openai_session_update_ok", False):
+            return False
+        low = (msg or "").lower()
+        if "unknown parameter" not in low:
+            return False
+        if "session.audio" in low or "session.output_modalities" in low or "session.noise_reduction" in low:
+            if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
+                return False
+            self._openai_session_update_retry = 1
+            self.ui.write_log("SYS: OpenAI Realtime session şeması legacy moda alındı.")
+            return self._queue_openai_event_threadsafe(self._openai_realtime_session_update(legacy=True))
+        if "session.type" in low:
+            # v2.8.1 no longer sends session.type. If the error came from a stale
+            # queued event, send the corrected GA update once more.
+            if int(getattr(self, "_openai_session_update_retry", 0) or 0) >= 1:
+                return False
+            self._openai_session_update_retry = 1
+            self.ui.write_log("SYS: OpenAI Realtime session.type kaldırıldı, oturum yeniden ayarlanıyor.")
+            return self._queue_openai_event_threadsafe(self._openai_realtime_session_update(legacy=False))
+        return False
+
     def _send_openai_text_turn(self, text: str) -> bool:
         raw = (text or "").strip()
         if not raw:
@@ -868,10 +953,7 @@ class JarvisLive:
                 "content": [{"type": "input_text", "text": raw}],
             },
         })
-        ok2 = self._queue_openai_event_threadsafe({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]},
-        })
+        ok2 = self._queue_openai_event_threadsafe(self._openai_request_audio_response())
         return bool(ok1 and ok2)
 
     def _openai_realtime_say(self, text: str) -> None:
@@ -930,10 +1012,7 @@ class JarvisLive:
                 "output": json.dumps({"result": output}, ensure_ascii=False),
             },
         }, ensure_ascii=False))
-        await ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]},
-        }, ensure_ascii=False))
+        await ws.send(json.dumps(self._openai_request_audio_response(), ensure_ascii=False))
 
     def _maybe_tool_from_output_item(self, event: dict) -> tuple[str, dict, str] | None:
         item = event.get("item") or event.get("output_item") or {}
@@ -1051,11 +1130,20 @@ class JarvisLive:
                 err = event.get("error") or {}
                 msg = str(err.get("message") or event)
                 print(f"[OpenAI RT] ❌ {msg}")
+                if self._openai_retry_session_update_from_error(msg):
+                    continue
                 self.ui.write_log("ERR: OpenAI Realtime — " + msg[:180])
                 continue
 
-            if etype in {"session.created", "session.updated"}:
+            if etype == "session.created":
                 print(f"[OpenAI RT] ✅ {etype}")
+                continue
+
+            if etype == "session.updated":
+                self._openai_session_update_ok = True
+                self._openai_session_update_retry = 0
+                print(f"[OpenAI RT] ✅ {etype}")
+                self.ui.write_log("SYS: OpenAI Realtime audio session ready.")
                 continue
 
             if etype == "input_audio_buffer.speech_started":
@@ -1123,6 +1211,12 @@ class JarvisLive:
                 if maybe:
                     name, args, call_id = maybe
                     asyncio.create_task(self._openai_execute_tool_result(ws, name, args, call_id))
+                continue
+
+            if etype in {"response.output_audio_transcript.done", "response.audio_transcript.done"}:
+                final_tx = str(event.get("transcript") or event.get("text") or "").strip()
+                if final_tx and not assistant_parts:
+                    assistant_parts.append(final_tx)
                 continue
 
             if etype in {"response.audio.done", "response.output_audio.done"}:
@@ -2113,6 +2207,8 @@ class JarvisLive:
                     self._wake_audio_queue = asyncio.Queue(maxsize=8)
                     self._openai_function_args = {}
                     self._openai_function_names = {}
+                    self._openai_session_update_ok = False
+                    self._openai_session_update_retry = 0
 
                     await ws.send(json.dumps(self._openai_realtime_session_update(), ensure_ascii=False))
                     print("[OpenAI RT] ✅ Connected.")
@@ -2144,6 +2240,8 @@ class JarvisLive:
                 self._openai_turn_done_event = None
                 self._openai_function_args = {}
                 self._openai_function_names = {}
+                self._openai_session_update_ok = False
+                self._openai_session_update_retry = 0
                 self._openai_realtime_stop_audio()
                 try:
                     cancel_vision_requests()
