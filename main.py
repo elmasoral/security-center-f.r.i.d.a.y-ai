@@ -7,6 +7,8 @@ import traceback
 import time
 import difflib
 import base64
+import tempfile
+import wave
 from urllib.parse import quote_plus
 from pathlib import Path
 
@@ -664,6 +666,14 @@ class JarvisLive:
         # beta compatibility can still be selected internally if an older endpoint
         # rejects GA fields.
         self._openai_realtime_schema = "ga"
+        self._openai_response_active = False
+        self._openai_active_response_id = ""
+        self._openai_pending_response_after_tool = False
+        self._openai_executed_tool_calls = set()
+        self._openai_audio_bytes_seen = 0
+        self._openai_audio_chunks_seen = 0
+        self._openai_audio_bytes_played = 0
+        self._openai_last_assistant_text = ""
 
     def _norm_text(self, text: str) -> str:
         text = (text or "").lower().strip()
@@ -905,19 +915,27 @@ class JarvisLive:
             return False
 
     def _openai_request_audio_response(self) -> dict:
-        """Create a response request that matches the active Realtime schema.
+        """Create one audio response request for the active Realtime schema.
 
-        GA Realtime accepts `output_modalities` and an optional audio output
-        block. Supplying the PCM rate here as well as in session.update keeps
-        the audio contract explicit and prevents silent/text-only fallbacks on
-        stricter endpoints.
+        Important: only one response can be active in a Realtime conversation.
+        Calls to this method are now routed through the active-response guard
+        below so we do not spam response.create while the previous answer or
+        tool-call turn is still in progress.
         """
         if str(getattr(self, "_openai_realtime_schema", "ga") or "ga") == "beta":
-            return {"type": "response.create", "response": {"modalities": ["audio", "text"]}}
+            return {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["audio", "text"],
+                    "voice": self._openai_realtime_voice(),
+                    "instructions": "Cevabı doğal, kısa ve sesli şekilde ver.",
+                },
+            }
         return {
             "type": "response.create",
             "response": {
                 "output_modalities": ["audio"],
+                "instructions": "Cevabı doğal, kısa ve sesli şekilde ver. Ses üret; yalnızca metin üretme.",
                 "audio": {
                     "output": {
                         "format": {"type": "audio/pcm", "rate": 24000},
@@ -926,6 +944,25 @@ class JarvisLive:
                 },
             },
         }
+
+    def _openai_queue_response_create(self, *, cancel_active: bool = False, after_tool: bool = False) -> bool:
+        """Queue response.create safely without triggering active-response errors."""
+        if bool(getattr(self, "_openai_response_active", False)):
+            if cancel_active:
+                self._queue_openai_event_threadsafe({"type": "response.cancel"})
+                self._openai_response_active = False
+                self._openai_active_response_id = ""
+            else:
+                self._openai_pending_response_after_tool = bool(after_tool or True)
+                return True
+        return self._queue_openai_event_threadsafe(self._openai_request_audio_response())
+
+    async def _openai_send_response_create(self, ws, *, after_tool: bool = False) -> None:
+        """Send response.create from the websocket loop with active-response protection."""
+        if bool(getattr(self, "_openai_response_active", False)):
+            self._openai_pending_response_after_tool = bool(after_tool or True)
+            return
+        await ws.send(json.dumps(self._openai_request_audio_response(), ensure_ascii=False))
 
     def _openai_retry_session_update_from_error(self, msg: str) -> bool:
         """Retry session.update once across GA/Beta schema differences."""
@@ -971,7 +1008,9 @@ class JarvisLive:
                 "content": [{"type": "input_text", "text": raw}],
             },
         })
-        ok2 = self._queue_openai_event_threadsafe(self._openai_request_audio_response())
+        # Text/direct-command turns are user interruptions. Cancel any unfinished
+        # assistant response first, then ask for exactly one new audio response.
+        ok2 = self._openai_queue_response_create(cancel_active=True)
         return bool(ok1 and ok2)
 
     def _openai_realtime_say(self, text: str) -> None:
@@ -994,6 +1033,15 @@ class JarvisLive:
         name = str(name or "").strip()
         args = dict(args or {})
         call_id = str(call_id or "").strip() or f"call_{int(time.time()*1000)}"
+        # Realtime can surface the same tool call through several lifecycle
+        # events. Execute each call_id only once, otherwise Security Center and
+        # camera calls repeat and then response.create collides with an active turn.
+        seen = getattr(self, "_openai_executed_tool_calls", set())
+        if call_id in seen:
+            print(f"[OpenAI RT] ↩ duplicate tool call ignored: {name} {call_id}")
+            return
+        seen.add(call_id)
+        self._openai_executed_tool_calls = seen
         self.ui.set_state("THINKING")
         print(f"[OpenAI RT] 🔧 {name} {args}")
         output = "Done."
@@ -1030,7 +1078,7 @@ class JarvisLive:
                 "output": json.dumps({"result": output}, ensure_ascii=False),
             },
         }, ensure_ascii=False))
-        await ws.send(json.dumps(self._openai_request_audio_response(), ensure_ascii=False))
+        await self._openai_send_response_create(ws, after_tool=True)
 
     def _maybe_tool_from_output_item(self, event: dict) -> tuple[str, dict, str] | None:
         item = event.get("item") or event.get("output_item") or {}
@@ -1090,15 +1138,113 @@ class JarvisLive:
             print(f"[OpenAI RT] ❌ Mic: {exc}")
             raise
 
+    def _openai_write_pcm_chunk(self, stream, chunk: bytes) -> int:
+        """Write raw PCM16 mono audio to sounddevice reliably.
+
+        RawOutputStream is picky on some Windows devices. OutputStream + numpy
+        lets PortAudio handle the device conversion more reliably.
+        """
+        try:
+            import numpy as np
+            arr = np.frombuffer(chunk, dtype=np.int16)
+            if CHANNELS > 1:
+                usable = (len(arr) // CHANNELS) * CHANNELS
+                arr = arr[:usable].reshape(-1, CHANNELS)
+            stream.write(arr)
+            return int(len(chunk))
+        except Exception:
+            # Last resort: if a RawOutputStream was used, bytes are accepted.
+            try:
+                stream.write(chunk)
+                return int(len(chunk))
+            except Exception:
+                raise
+
+    async def _openai_tts_wav_fallback(self, text: str) -> None:
+        """Play a guaranteed WAV fallback through the system device.
+
+        If the Realtime socket returns only transcript text, the user gets a
+        silent assistant. This fallback asks OpenAI's speech endpoint for a WAV
+        using the same selected voice and plays it with Windows' system audio
+        stack when available. It is not used when realtime audio deltas arrive.
+        """
+        msg = (text or "").strip()
+        if not msg:
+            return
+        api_key = (get_openai_api_key() or os.environ.get("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            return
+        try:
+            import requests
+            def _fetch():
+                return requests.post(
+                    "https://api.openai.com/v1/audio/speech",
+                    headers={
+                        "Authorization": "Bearer " + api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-4o-mini-tts",
+                        "voice": self._openai_realtime_voice(),
+                        "input": msg[:3500],
+                        "instructions": "Türkçe doğal, akıcı, kısa ve net konuş. Masaüstü asistanı gibi sıcak bir ton kullan.",
+                        "response_format": "wav",
+                    },
+                    timeout=45,
+                )
+            res = await asyncio.to_thread(_fetch)
+            if getattr(res, "status_code", 0) >= 400:
+                print(f"[OpenAI RT] ⚠️ TTS fallback HTTP {res.status_code}: {getattr(res, 'text', '')[:160]}")
+                return
+            data = bytes(res.content or b"")
+            if len(data) < 128:
+                return
+
+            self.set_speaking(True)
+            self._assistant_audio_guard_until = time.time() + 90.0
+            print(f"[OpenAI RT] 🔊 TTS fallback WAV {len(data):,} bytes")
+
+            if os.name == "nt":
+                def _play_win():
+                    import winsound
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                    try:
+                        tmp.write(data); tmp.flush(); tmp.close()
+                        winsound.PlaySound(tmp.name, winsound.SND_FILENAME)
+                    finally:
+                        try:
+                            os.unlink(tmp.name)
+                        except Exception:
+                            pass
+                await asyncio.to_thread(_play_win)
+            else:
+                def _play_wave():
+                    import numpy as np
+                    import io
+                    with wave.open(io.BytesIO(data), "rb") as wf:
+                        rate = wf.getframerate()
+                        channels = wf.getnchannels()
+                        pcm = wf.readframes(wf.getnframes())
+                    arr = np.frombuffer(pcm, dtype=np.int16)
+                    if channels > 1:
+                        arr = arr.reshape(-1, channels)
+                    sd.play(arr, samplerate=rate, blocking=True)
+                await asyncio.to_thread(_play_wave)
+        except Exception as exc:
+            print(f"[OpenAI RT] ⚠️ TTS fallback failed: {exc}")
+        finally:
+            self._assistant_audio_guard_until = time.time() + 4.0
+            self.set_speaking(False)
+
     async def _openai_play_audio(self):
         print("[OpenAI RT] 🔊 Play started")
         stream = None
         try:
-            stream = sd.RawOutputStream(
+            stream = sd.OutputStream(
                 samplerate=24000,
                 channels=CHANNELS,
                 dtype="int16",
-                blocksize=CHUNK_SIZE,
+                blocksize=0,
             )
             stream.start()
         except Exception as exc:
@@ -1120,7 +1266,8 @@ class JarvisLive:
                     self.set_speaking(False)
                     continue
                 self.set_speaking(True)
-                await asyncio.to_thread(stream.write, chunk)
+                played = await asyncio.to_thread(self._openai_write_pcm_chunk, stream, chunk)
+                self._openai_audio_bytes_played = int(getattr(self, "_openai_audio_bytes_played", 0) or 0) + int(played or 0)
         except Exception as exc:
             print(f"[OpenAI RT] ❌ Play: {exc}")
             raise
@@ -1148,12 +1295,20 @@ class JarvisLive:
                 err = event.get("error") or {}
                 msg = str(err.get("message") or event)
                 print(f"[OpenAI RT] ❌ {msg}")
+                low_msg = msg.lower()
                 if self._openai_retry_session_update_from_error(msg):
+                    continue
+                if "active response in progress" in low_msg:
+                    # Benign race: the server is still finishing the previous
+                    # response. Do not spam the UI; ask again after response.done.
+                    self._openai_pending_response_after_tool = True
                     continue
                 self.ui.write_log("ERR: OpenAI Realtime — " + msg[:180])
                 continue
 
             if etype == "session.created":
+                self._openai_response_active = False
+                self._openai_active_response_id = ""
                 print(f"[OpenAI RT] ✅ {etype}")
                 continue
 
@@ -1164,9 +1319,32 @@ class JarvisLive:
                 self.ui.write_log("SYS: OpenAI Realtime audio session ready.")
                 continue
 
+            if etype == "response.created":
+                resp = event.get("response") or {}
+                self._openai_response_active = True
+                self._openai_active_response_id = str(resp.get("id") or event.get("response_id") or "")
+                self._openai_audio_bytes_seen = 0
+                self._openai_audio_chunks_seen = 0
+                self._openai_audio_bytes_played = 0
+                assistant_parts = []
+                text_parts = []
+                continue
+
+            if etype in {"response.cancelled", "response.canceled"}:
+                self._openai_response_active = False
+                self._openai_active_response_id = ""
+                self._openai_realtime_stop_audio()
+                continue
+
             if etype == "input_audio_buffer.speech_started":
                 # Let the user barge in naturally: stop any queued assistant
-                # audio as soon as the server detects new speech.
+                # audio as soon as the server detects new speech. If a response
+                # is still active, cancel it before the next turn to prevent the
+                # "active response in progress" error.
+                if bool(getattr(self, "_openai_response_active", False)):
+                    self._queue_openai_event_threadsafe({"type": "response.cancel"})
+                    self._openai_response_active = False
+                    self._openai_active_response_id = ""
                 self._openai_realtime_stop_audio()
                 self.ui.set_state("LISTENING")
                 continue
@@ -1192,9 +1370,14 @@ class JarvisLive:
                 delta = event.get("delta") or event.get("audio") or ""
                 if delta:
                     try:
-                        self._openai_audio_queue.put_nowait(base64.b64decode(delta))
-                    except Exception:
-                        pass
+                        decoded = base64.b64decode(delta)
+                        self._openai_audio_chunks_seen = int(getattr(self, "_openai_audio_chunks_seen", 0) or 0) + 1
+                        self._openai_audio_bytes_seen = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0) + len(decoded)
+                        if int(getattr(self, "_openai_audio_chunks_seen", 0) or 0) == 1:
+                            print(f"[OpenAI RT] 🔊 first realtime audio chunk: {len(decoded):,} bytes")
+                        self._openai_audio_queue.put_nowait(decoded)
+                    except Exception as exc:
+                        print(f"[OpenAI RT] ⚠️ audio delta ignored: {exc}")
                 continue
 
             if etype in {"response.audio_transcript.delta", "response.output_audio_transcript.delta"}:
@@ -1248,6 +1431,9 @@ class JarvisLive:
                 continue
 
             if etype == "response.done":
+                self._openai_response_active = False
+                self._openai_active_response_id = ""
+                found_tool = False
                 # Some SDK/API variants only expose tool calls inside response.done.
                 try:
                     resp = event.get("response") or {}
@@ -1261,16 +1447,31 @@ class JarvisLive:
                             except Exception:
                                 args = {}
                             if name:
+                                found_tool = True
                                 asyncio.create_task(self._openai_execute_tool_result(ws, name, args, call_id))
                 except Exception:
                     pass
                 full = re.sub(r"\s+", " ", "".join(assistant_parts or text_parts)).strip()
                 if full:
+                    self._openai_last_assistant_text = full
                     self.ui.write_log("FRIDAY: " + full)
+                    # If the socket returned only transcript/text and no audio
+                    # bytes, force a reliable OpenAI TTS WAV fallback so FRIDAY
+                    # is never silent.
+                    if int(getattr(self, "_openai_audio_bytes_seen", 0) or 0) <= 0:
+                        asyncio.create_task(self._openai_tts_wav_fallback(full))
+                audio_seen = int(getattr(self, "_openai_audio_bytes_seen", 0) or 0)
+                played = int(getattr(self, "_openai_audio_bytes_played", 0) or 0)
+                if full:
+                    print(f"[OpenAI RT] turn done — audio_seen={audio_seen:,} bytes, played={played:,} bytes")
                 assistant_parts = []
                 text_parts = []
                 if self._openai_turn_done_event:
                     self._openai_turn_done_event.set()
+                if self._openai_pending_response_after_tool and not found_tool:
+                    self._openai_pending_response_after_tool = False
+                    await self._openai_send_response_create(ws, after_tool=True)
+                    continue
                 if self.ui.standby:
                     self.ui.set_state("STANDBY")
                 elif not self.ui.muted:
@@ -2231,6 +2432,13 @@ class JarvisLive:
                     self._wake_audio_queue = asyncio.Queue(maxsize=8)
                     self._openai_function_args = {}
                     self._openai_function_names = {}
+                    self._openai_executed_tool_calls = set()
+                    self._openai_response_active = False
+                    self._openai_active_response_id = ""
+                    self._openai_pending_response_after_tool = False
+                    self._openai_audio_bytes_seen = 0
+                    self._openai_audio_chunks_seen = 0
+                    self._openai_audio_bytes_played = 0
                     self._openai_session_update_ok = False
                     self._openai_session_update_retry = 0
 
@@ -2267,6 +2475,13 @@ class JarvisLive:
                 self._openai_turn_done_event = None
                 self._openai_function_args = {}
                 self._openai_function_names = {}
+                self._openai_executed_tool_calls = set()
+                self._openai_response_active = False
+                self._openai_active_response_id = ""
+                self._openai_pending_response_after_tool = False
+                self._openai_audio_bytes_seen = 0
+                self._openai_audio_chunks_seen = 0
+                self._openai_audio_bytes_played = 0
                 self._openai_session_update_ok = False
                 self._openai_session_update_retry = 0
                 self._openai_realtime_stop_audio()
