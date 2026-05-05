@@ -2055,6 +2055,141 @@ class SetupOverlay(QWidget):
         self.done.emit(key, self._sel_os)
 
 
+class ActivityLineWidget(QWidget):
+    """
+    Compact live telemetry line chart for the left SYSTEM ACTIVITY card.
+    Safe standalone widget: draws a soft MEDPOV cyan activity line without
+    depending on external chart libraries.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(52)
+        self.setMinimumWidth(120)
+        self._tick = 0
+        self._points = [
+            0.20, 0.26, 0.41, 0.34, 0.31, 0.33, 0.22, 0.19,
+            0.36, 0.40, 0.34, 0.36, 0.42, 0.28, 0.29, 0.35,
+            0.36, 0.39, 0.44, 0.27
+        ]
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._animate)
+        self._timer.start(950)
+
+    def _animate(self):
+        self._tick += 1
+
+        try:
+            snap = _metrics.snapshot()
+            cpu = float(snap.get("cpu", 0.0)) / 100.0
+            mem = float(snap.get("mem", 0.0)) / 100.0
+            net = min(1.0, float(snap.get("net", 0.0)) / 4.0)
+            live = max(0.10, min(0.92, (cpu * 0.45) + (mem * 0.25) + (net * 0.30)))
+        except Exception:
+            live = 0.30 + 0.16 * math.sin(self._tick * 0.65)
+
+        pulse = 0.035 * math.sin(self._tick * 0.82)
+        live = max(0.08, min(0.94, live + pulse))
+
+        self._points.append(live)
+        if len(self._points) > 22:
+            self._points = self._points[-22:]
+
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        W = float(self.width())
+        H = float(self.height())
+
+        # Background panel
+        bg = QLinearGradient(0, 0, W, H)
+        bg.setColorAt(0.00, qcol("#061421", 190))
+        bg.setColorAt(1.00, qcol("#020711", 225))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(QRectF(0, 0, W, H), 12, 12)
+
+        left = 13.0
+        right = W - 11.0
+        top = 9.0
+        bottom = H - 10.0
+        width = max(1.0, right - left)
+        height = max(1.0, bottom - top)
+
+        # Grid / baseline
+        p.setPen(QPen(qcol(C.BORDER_A, 58), 1))
+        for i in range(1, 4):
+            y = top + height * i / 4.0
+            p.drawLine(QPointF(left, y), QPointF(right, y))
+
+        p.setPen(QPen(qcol(C.PRI, 54), 1))
+        p.drawLine(QPointF(left, bottom), QPointF(right, bottom))
+
+        pts = list(self._points)
+        if len(pts) < 2:
+            return
+
+        step = width / max(1, len(pts) - 1)
+
+        path = QPainterPath()
+        area = QPainterPath()
+
+        for i, value in enumerate(pts):
+            x = left + i * step
+            y = bottom - (max(0.0, min(1.0, value)) * height)
+
+            if i == 0:
+                path.moveTo(x, y)
+                area.moveTo(x, bottom)
+                area.lineTo(x, y)
+            else:
+                px = left + (i - 1) * step
+                py = bottom - (max(0.0, min(1.0, pts[i - 1])) * height)
+                cx1 = px + step * 0.48
+                cx2 = x - step * 0.48
+                path.cubicTo(QPointF(cx1, py), QPointF(cx2, y), QPointF(x, y))
+                area.cubicTo(QPointF(cx1, py), QPointF(cx2, y), QPointF(x, y))
+
+        area.lineTo(right, bottom)
+        area.closeSubpath()
+
+        fill = QLinearGradient(0, top, 0, bottom)
+        fill.setColorAt(0.00, qcol(C.PRI, 66))
+        fill.setColorAt(1.00, qcol(C.PRI, 0))
+        p.setBrush(QBrush(fill))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawPath(area)
+
+        # Glow line
+        glow_pen = QPen(qcol(C.PRI, 58), 5)
+        glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        glow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(glow_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(path)
+
+        line_pen = QPen(qcol("#32efff", 235), 2)
+        line_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(line_pen)
+        p.drawPath(path)
+
+        # Latest point
+        last_value = max(0.0, min(1.0, pts[-1]))
+        lx = right
+        ly = bottom - last_value * height
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(C.GREEN, 220)))
+        p.drawEllipse(QPointF(lx, ly), 3.2, 3.2)
+
+        p.setBrush(QBrush(qcol(C.PRI, 55)))
+        p.drawEllipse(QPointF(lx, ly), 7.0, 7.0)
+
 class MainWindow(QMainWindow):
     _log_sig          = pyqtSignal(str)
     _state_sig        = pyqtSignal(str)
@@ -3501,6 +3636,7 @@ except Exception:
     pass
 
 # === /MEDPOV FRIDAY UI V3 FILE INPUT + SECURITY BADGE FIX ===
+
 
 
 
