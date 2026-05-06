@@ -1,6 +1,6 @@
-﻿# F.R.I.D.A.Y Command Center
+# F.R.I.D.A.Y Command Center
 
-**F.R.I.D.A.Y Command Center v2.8.6** is a local Windows desktop AI command center by **MEDPOV**. It combines a holographic command-center interface, voice and text interaction, camera-assisted desktop analysis, live Security Center map views, local PC controls, file analysis, and independent AI provider support for **Gemini** and **OpenAI**.
+**F.R.I.D.A.Y Command Center v2.8.7** is a local Windows desktop AI command center by **MEDPOV**. It combines a holographic command-center interface, voice and text interaction, camera-assisted desktop analysis, live Security Center map views, local PC controls, file analysis, and independent AI provider support for **Gemini** and **OpenAI**.
 
 Designed by **MEDPOV**.
 
@@ -13,12 +13,12 @@ https://medpov.com/product/medpov-security-center
 
 ---
 
-## Version 2.8.6 Highlights
+## Version 2.8.7 Highlights
 
 | Area | What Changed |
 |---|---|
 | Command Center UI | The desktop command center was strengthened with a more responsive dashboard-style layout. |
-| Security Map | A dedicated Security Map view was added and improved with dashboard-style framing, route rendering, map controls, and visual fixes. |
+| Security Map | A dedicated Security Map view was added and now opens as a clean world map first; threat and live/global activity layers are shown only after explicit commands. |
 | Camera Mode | Camera-assisted analysis is available from the command center when enabled. |
 | Camera Disable Mode | The camera can be disabled from settings. When disabled, F.R.I.D.A.Y will not open the camera and will respond that camera access is currently disabled. |
 | Gemini Provider | Gemini can be configured and used as its own independent AI provider. |
@@ -329,7 +329,7 @@ After changing provider, model, voice, camera, or language settings, restart F.R
 
 ## Gemini and OpenAI Provider Separation
 
-F.R.I.D.A.Y v2.8.6 treats Gemini and OpenAI as separate providers.
+F.R.I.D.A.Y v2.8.7 treats Gemini and OpenAI as separate providers.
 
 | Provider | Configuration | Typical Use |
 |---|---|---|
@@ -622,10 +622,12 @@ README.md
 
 ## Release Notes
 
-### v2.8.6 — Strengthened Command Center
+### v2.8.7 — Clean Security Map Start
 
 - Strengthened the F.R.I.D.A.Y command-center interface.
-- Added and improved Security Map experience.
+- Updated Security Map behavior so the MAP button opens a clean world map first.
+- Threat lines are shown only after explicit threat map commands.
+- Live/global activity lines are shown only after explicit live activity commands.
 - Added camera-assisted desktop workflow support.
 - Added camera disable behavior for privacy and controlled environments.
 - Separated Gemini and OpenAI provider configuration.

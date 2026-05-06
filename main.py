@@ -616,8 +616,8 @@ TOOL_DECLARATIONS = [
         "name": "security_map",
         "description": (
             "Opens and controls the large MEDPOV Security Center global map HUD inside FRIDAY. "
-            "Use this when the user says harita aç, map open, Londra aç, zoom to a city, show latest threats on map, show live connections, or show threat and live together. "
-            "The map can start as a clean world map without API data, zoom to known cities, or draw Security Center map-intelligence layers from the remote API."
+            "Use this when the user says harita aç, map open, Londra aç, zoom to a city, show latest threats on map, show latest global activities, show live connections, or show threat and live together. Plain map-open commands should open a clean world map. "
+            "The map starts as a clean world map without API data, can zoom to known cities, and draws Security Center threat/live layers only after explicit layer commands."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -903,7 +903,7 @@ class FridayLive:
             "You are running on the OpenAI Realtime provider only. Do not mention Gemini. Do not claim a tool result unless a tool has been executed.",
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
             "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
-            "For map commands such as harita aç, Londra aç, latest threats on map, live connections, or both layers, call security_map instead of answering verbally. The map HUD is a local visual mode, similar to camera mode.",
+            "For map commands such as harita aç, Londra aç, latest threats on map, son global aktiviteler, live connections, or both layers, call security_map instead of answering verbally. Plain map-open commands must open a clean world map first; threat/live layers are drawn only when explicitly requested. The map HUD is a local visual mode, similar to camera mode.",
             "FRIDAY runtime commands are NOT computer settings. If the user says standby, stand by, bekleme moduna geç, bekleme modunu aktif et, dinlemeyi durdur, or sleep mode, do not call computer_settings; switch to standby/listening state only.",
             "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
             "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
@@ -2166,7 +2166,7 @@ class FridayLive:
         # Layer commands: these must call the Security Center remote map API.
         has_map_word = any(w in t for w in ("harita", "map", "global map", "dunya", "dünya"))
         threat_words = ("son tehdit", "tehditleri", "tehditler", "threat", "attack", "saldiri", "saldırı")
-        live_words = ("canli baglanti", "canlı bağlantı", "canli ziyaret", "canlı ziyaret", "live connection", "live visitor", "visitor", "user")
+        live_words = ("canli baglanti", "canlı bağlantı", "canli ziyaret", "canlı ziyaret", "live connection", "live visitor", "visitor", "user", "global activity", "global activities", "global aktivite", "global aktiviteler", "son global", "latest global", "activity map", "aktivite")
         both_words = ("both", "hepsi", "birlikte", "beraber", "tehdit ve canli", "tehdit ve canlı", "threat and live")
         if (has_map_word or map_open) and any(p in t for p in both_words):
             return {"action": "map_both", "live_range": "live", "include_curve_points": True, "text": raw}

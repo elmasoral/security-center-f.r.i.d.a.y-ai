@@ -243,20 +243,16 @@ def security_center_action(parameters: Optional[Dict[str, Any]] = None, player: 
         "map_zoom": "map_zoom", "zoom": "map_zoom", "focus_map": "map_zoom", "city": "map_zoom",
         "threat_map": "map_threat", "map_threat": "map_threat", "tehdit_haritasi": "map_threat", "tehdit_haritası": "map_threat",
         "live_map": "map_live", "map_live": "map_live", "canli_harita": "map_live", "canlı_harita": "map_live",
+        "global_activity": "map_live", "global_activities": "map_live", "global_aktivite": "map_live", "global_aktiviteler": "map_live", "son_global_aktiviteler": "map_live", "activity_map": "map_live", "latest_activity": "map_live",
         "both_map": "map_both", "map_both": "map_both", "hepsi_harita": "map_both", "combined_map": "map_both",
     }
     action = aliases.get(action, action)
 
     # Visual map actions. These update the large FRIDAY HUD map when a UI player is available.
     if action == "map_open":
-        # Open the same dashboard-grade map payload used by the web Security Center.
-        # This prevents the FRIDAY map from opening as an empty/static world map.
-        data = c.both_map(threat_range=threat_range, live_range=live_range, include_curve_points=include_curve_points)
-        if isinstance(data, dict) and data.get("ok", True) is not False:
-            _push_map_to_ui(player, data, mode="both", focus=focus)
-            return _format_map(data, "both")
+        # Open a clean world map first. Threat/live layers must be requested explicitly.
         _push_map_to_ui(player, None, mode="world", focus=focus)
-        return "Security global world map açıldı; ancak Security Center map verisi alınamadı: " + str((data or {}).get("message", "unknown error"))
+        return "Security global world map açıldı. Katmanlar kapalı; tehditleri veya son global aktiviteleri istediğinde çizgiler gösterilir."
     if action == "map_close":
         _close_map(player)
         return "Security map kapatıldı."
@@ -368,7 +364,7 @@ def parse_slash_command(text: str) -> Optional[Dict[str, Any]]:
         "ignore": "ignore_ip", "yoksay": "ignore_ip", "resolve-event": "resolve_event", "resolve": "resolve_event", "resolve-ip": "resolve_ip_events", "ai-recheck": "ai_recheck", "recheck": "ai_recheck",
         "map": "map_open", "open": "map_open", "aç": "map_open", "ac": "map_open", "close": "map_close", "kapat": "map_close",
         "zoom": "map_zoom", "focus": "map_zoom", "city": "map_zoom", "threat-map": "map_threat", "threat": "map_threat", "tehdit-map": "map_threat", "tehdit": "map_threat",
-        "live-map": "map_live", "canli-map": "map_live", "canlı-map": "map_live", "both-map": "map_both", "both": "map_both", "hepsi": "map_both",
+        "live-map": "map_live", "canli-map": "map_live", "canlı-map": "map_live", "global-activity": "map_live", "global-activities": "map_live", "global-aktivite": "map_live", "global-aktiviteler": "map_live", "activity": "map_live", "aktivite": "map_live", "both-map": "map_both", "both": "map_both", "hepsi": "map_both",
     }
     action = aliases.get(cmd, cmd)
     if action == "map_zoom" and not rest:

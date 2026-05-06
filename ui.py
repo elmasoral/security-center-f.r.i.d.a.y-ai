@@ -3196,7 +3196,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(_fl("|", C.BORDER_A))
         lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("v2.8.6", C.TEXT_DIM))
+        lay.addWidget(_fl("v2.8.7", C.TEXT_DIM))
         lay.addWidget(_fl("⌁", C.PRI))
         lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
@@ -5257,14 +5257,24 @@ def _mp_map_draw_hud_panel(self, p: QPainter, rect: QRectF, w: float, h: float):
     p.setPen(QPen(qcol(C.PRI, 82), 1))
     p.setBrush(QBrush(qcol("#061421", 226)))
     p.drawRoundedRect(pill, 13, 13)
+    clean_world = (
+        mode in {"WORLD", "BLANK", "EMPTY"}
+        and not _mp_map_extract_points(self, "threat")
+        and not _mp_map_extract_traces(self, "threat")
+        and not _mp_map_extract_points(self, "live")
+        and not _mp_map_extract_traces(self, "live")
+    )
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QBrush(qcol(C.GREEN if mode in {"LIVE", "BOTH"} else C.ACC, 235)))
+    p.setBrush(QBrush(qcol(C.PRI if clean_world else (C.GREEN if mode in {"LIVE", "BOTH"} else C.ACC), 235)))
     p.drawEllipse(QPointF(pill.left() + 18, pill.center().y()), 4.2, 4.2)
     p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
     p.setPen(qcol("#eaf8ff", 225))
-    status = f"Map lines active · Threats: {threat_count} · Users: {user_count}"
-    if updated:
-        status += f" · {updated[-8:]}"
+    if clean_world:
+        status = "Clean map ready · Ask for threats or global activity to draw layers"
+    else:
+        status = f"Map lines active · Threats: {threat_count} · Users: {user_count}"
+        if updated:
+            status += f" · {updated[-8:]}"
     p.drawText(QRectF(pill.left() + 31, pill.top() + 8, pill.width() - 42, 18), Qt.AlignmentFlag.AlignLeft, status[:76])
 
 
@@ -5806,8 +5816,10 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
     _mp_map_draw_city_labels(self, p, rect)
 
     mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower()
-    threat_on = mode in {"world", "threat", "both", "map", "map-data"} or _mpv81_has_layer_data(self, "threat")
-    live_on = mode in {"live", "both"} or (mode == "world" and _mpv81_has_layer_data(self, "live"))
+    # Clean world mode never draws data layers automatically.
+    # Threat/live layers appear only after explicit commands such as threat map or global activity.
+    threat_on = mode in {"threat", "both", "map", "map-data"}
+    live_on = mode in {"live", "both"}
 
     if threat_on:
         for tr in _mp_map_extract_traces(self, "threat")[:100]:
@@ -5816,7 +5828,14 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
         for tr in _mp_map_extract_traces(self, "live")[:120]:
             _mp_map_draw_trace(self, p, rect, tr, "live")
 
-    _mp_map_draw_target(self, p, rect)
+    clean_world = (
+        mode in {"world", "blank", "empty"}
+        and not _mpv81_has_layer_data(self, "threat")
+        and not _mpv81_has_layer_data(self, "live")
+        and not (isinstance(getattr(self, "_security_map_data", {}), dict) and getattr(self, "_security_map_data", {}).get("target"))
+    )
+    if not clean_world:
+        _mp_map_draw_target(self, p, rect)
 
     if threat_on:
         for i, item in enumerate(_mp_map_extract_points(self, "threat")[:90]):
@@ -5857,32 +5876,15 @@ def _mpv81_hud_paint_event(self, event):
 
 
 def _mpv81_open_security_map_quick(self):
-    """Left MAP button: open immediately, then hydrate with real Security Center dashboard map data."""
+    """Left MAP button: open a clean world map first. Data layers are loaded only by command."""
     try:
-        self.start_security_map(mode="both", data={}, focus="")
-        self._log.append_log("SYS: Map quick button requested · loading Security Center both-map.")
+        self.start_security_map(mode="world", data={}, focus="")
+        self._log.append_log("SYS: Map quick button requested · clean world map opened.")
     except Exception as exc:
         try:
             self._log.append_log(f"ERR: Map quick button failed — {exc}")
         except Exception:
             pass
-        return
-
-    def _worker():
-        try:
-            try:
-                from tools.security_center_client import SecurityCenterClient
-            except Exception:
-                from security_center_client import SecurityCenterClient  # type: ignore
-            data = SecurityCenterClient(timeout=18).both_map(threat_range="24h", live_range="live", include_curve_points=True)
-            if isinstance(data, dict) and data.get("ok", True) is not False:
-                self._map_start_sig.emit({"mode": "both", "data": data, "focus": ""})
-            else:
-                self._map_start_sig.emit({"mode": "world", "data": {}, "focus": ""})
-        except Exception:
-            self._map_start_sig.emit({"mode": "world", "data": {}, "focus": ""})
-
-    threading.Thread(target=_worker, daemon=True).start()
 
 
 try:
@@ -6032,3 +6034,25 @@ def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
 
     p.restore()
     return loaded
+
+# === MEDPOV FRIDAY v2.8.7 CLEAN MAP START PATCH ===
+# The map opens as a clean world map. Threat/live layers are drawn only after explicit commands.
+def _mpv87_open_security_map_quick_clean(self):
+    try:
+        self.start_security_map(mode="world", data={}, focus="")
+        self._log.append_log("SYS: Clean security map opened. Threat/live layers are waiting for command.")
+    except Exception as exc:
+        try:
+            self._log.append_log(f"ERR: Clean map open failed — {exc}")
+        except Exception:
+            pass
+
+try:
+    MainWindow._open_security_map_quick = _mpv87_open_security_map_quick_clean
+except Exception as _mpv87_clean_map_patch_error:
+    try:
+        print("[FRIDAY UI] clean map start patch install error:", _mpv87_clean_map_patch_error)
+    except Exception:
+        pass
+# === /MEDPOV FRIDAY v2.8.7 CLEAN MAP START PATCH ===
+
