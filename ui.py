@@ -5583,4 +5583,136 @@ except Exception as _mpv6_map_patch_error:
     except Exception:
         pass
 
-# === /MEDPOV FRIDAY UI V6 SECURITY CENTER GLOBAL MAP HUD ===
+# === MEDPOV FRIDAY MAP PAN / WRAP LINE FIX ONLY ===
+# Fixes broken route lines when dragging the map left/right.
+# No visual redesign, no glow, no red frame, no pulse.
+
+def _mpv81_project_continuous(self, lat: float, lng: float, rect: QRectF) -> QPointF:
+    """
+    Projects lat/lng relative to the current map center.
+    This prevents points/lines from jumping to the duplicated world copy.
+    """
+    _mp_map_init(self)
+
+    z = _mp_map_tile_zoom(self)
+    center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+    point_px = _mp_map_latlng_to_world_px(float(lat), float(lng), z)
+
+    return QPointF(
+        rect.center().x() + (point_px.x() - center_px.x()),
+        rect.center().y() + (point_px.y() - center_px.y()),
+    )
+
+
+def _mp_map_project(self, lat, lng, rect: QRectF):
+    """
+    Override old projection with continuous projection.
+    Important for map panning.
+    """
+    return _mpv81_project_continuous(self, float(lat), float(lng), rect)
+
+
+def _mpv81_adjust_lng_to_anchor(lng: float, anchor_lng: float) -> float:
+    """
+    Keeps route source longitude near the target longitude.
+    This is the main anti-wrap fix.
+    """
+    lng = float(lng)
+    anchor_lng = float(anchor_lng)
+
+    while (lng - anchor_lng) > 180.0:
+        lng -= 360.0
+
+    while (lng - anchor_lng) < -180.0:
+        lng += 360.0
+
+    return lng
+
+
+def _mpv81_default_target(self) -> dict:
+    data = getattr(self, "_security_map_data", {}) or {}
+    target = data.get("target") if isinstance(data, dict) else None
+
+    if isinstance(target, dict) and target.get("lat") is not None and target.get("lng") is not None:
+        return target
+
+    return {
+        "lat": 41.0082,
+        "lng": 28.9784,
+        "url": "medpov.com",
+        "label": "medpov.com",
+    }
+
+
+def _mpv81_trace_endpoint(trace: dict, key: str, fallback: dict | None = None) -> dict | None:
+    value = trace.get(key) if isinstance(trace, dict) else None
+
+    if isinstance(value, dict) and value.get("lat") is not None and value.get("lng") is not None:
+        return value
+
+    if fallback and fallback.get("lat") is not None and fallback.get("lng") is not None:
+        return fallback
+
+    return None
+
+
+def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPainterPath | None:
+    """
+    Builds a route path without allowing wrong world-copy wrap lines.
+    """
+    target = _mpv81_default_target(self)
+
+    src = _mpv81_trace_endpoint(trace, "from")
+    dst = _mpv81_trace_endpoint(trace, "to", target)
+
+    if not src or not dst:
+        return None
+
+    try:
+        dst_lat = float(dst.get("lat"))
+        dst_lng = float(dst.get("lng"))
+
+        src_lat = float(src.get("lat"))
+
+        # Critical fix:
+        # Keep source longitude close to destination longitude.
+        src_lng = _mpv81_adjust_lng_to_anchor(float(src.get("lng")), dst_lng)
+
+    except Exception:
+        return None
+
+    p1 = _mpv81_project_continuous(self, src_lat, src_lng, rect)
+    p2 = _mpv81_project_continuous(self, dst_lat, dst_lng, rect)
+
+    if not (_mp_map_on_screen(p1, rect, 180.0) or _mp_map_on_screen(p2, rect, 180.0)):
+        return None
+
+    dx = p2.x() - p1.x()
+    dy = p2.y() - p1.y()
+    distance = math.hypot(dx, dy)
+
+    if distance < 10.0:
+        return None
+
+    # Critical safety:
+    # If line still becomes extremely wide, it is probably a wrong wrapped world route.
+    if abs(dx) > rect.width() * 1.35:
+        return None
+
+    lift = max(34.0, min(170.0, distance * 0.18))
+    side = -1.0 if p1.y() > p2.y() else 1.0
+
+    mid = QPointF(
+        (p1.x() + p2.x()) / 2.0,
+        (p1.y() + p2.y()) / 2.0 - lift * side,
+    )
+
+    path = QPainterPath()
+    path.moveTo(p1)
+    path.quadTo(mid, p2)
+
+    return path
+
+# === /MEDPOV FRIDAY MAP PAN / WRAP LINE FIX ONLY ===
