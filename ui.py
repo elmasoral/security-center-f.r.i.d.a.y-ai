@@ -6056,3 +6056,769 @@ except Exception as _mpv87_clean_map_patch_error:
         pass
 # === /MEDPOV FRIDAY v2.8.7 CLEAN MAP START PATCH ===
 
+
+
+# === MEDPOV FRIDAY v2.8.8 OSM + 2D/3D MAP PATCH ===
+# Drop-in patch: paste at the END of ui.py.
+# - GLOBAL/WORLD map uses OpenStreetMap street tiles with deep city/street zoom.
+# - Threat/live maps keep the dark security tile source.
+# - Friday Settings > Map can switch Security Map View between 2D and 3D globe.
+# - Mouse wheel zoom limit is extended so city streets can be inspected.
+
+_MPV88_OSM_MAP_PATCH = True
+_MPV88_OSM_PROVIDER = "openstreetmap"
+_MPV88_DARK_PROVIDER = "carto_dark"
+_MPV88_TILE_PENDING = set()
+_MPV88_TILE_LOCK = threading.Lock()
+
+
+def _mpv88_read_map_settings() -> dict:
+    """Read map settings directly from config/friday_settings.json without requiring a restart."""
+    try:
+        path = CONFIG_DIR / "friday_settings.json"
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8") or "{}")
+            if isinstance(data, dict):
+                raw = data.get("map") or data.get("security_map") or {}
+                return raw if isinstance(raw, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _mpv88_map_view_mode(self=None) -> str:
+    raw = str(_mpv88_read_map_settings().get("view_mode") or "2d").strip().lower()
+    raw = raw.replace(" ", "").replace("-", "")
+    if raw in {"3d", "globe", "sphere", "kure", "küre"}:
+        return "3d"
+    return "2d"
+
+
+def _mpv88_is_world_mode(self) -> bool:
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower().strip()
+    return mode in {"world", "blank", "empty", "global", "global-map"}
+
+
+def _mpv88_tile_provider(self) -> str:
+    # Global / normal map: OSM street source so we can zoom down to city/street level.
+    # Threat and live intelligence layers stay on the dark dashboard source.
+    return _MPV88_OSM_PROVIDER if _mpv88_is_world_mode(self) else _MPV88_DARK_PROVIDER
+
+
+def _mpv88_max_tile_zoom(self) -> int:
+    try:
+        value = int((_mpv88_read_map_settings().get("max_zoom") or 18))
+    except Exception:
+        value = 18
+    return max(5, min(19, value))
+
+
+def _mp_map_tile_zoom(self) -> int:
+    """Translate FRIDAY visual zoom into real tile zoom; OSM supports city/street-level zoom."""
+    _mp_map_init(self)
+    visual = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+    provider = _mpv88_tile_provider(self)
+
+    # Visual zoom is intentionally not the same as tile zoom; it gives a smoother wheel feel.
+    if visual < 1.12:
+        z = 3
+    elif visual < 1.40:
+        z = 4
+    elif visual < 1.90:
+        z = 5
+    elif visual < 2.55:
+        z = 6
+    elif visual < 3.35:
+        z = 7
+    elif visual < 4.35:
+        z = 8
+    elif visual < 5.60:
+        z = 10
+    elif visual < 7.20:
+        z = 12
+    elif visual < 9.30:
+        z = 14
+    elif visual < 12.20:
+        z = 16
+    else:
+        z = 18
+
+    if provider == _MPV88_OSM_PROVIDER:
+        return min(_mpv88_max_tile_zoom(self), z)
+    # Dark security map also works when focused, but keep it a little lighter for performance.
+    return min(16, z)
+
+
+def _mpv88_tile_cache_dir(provider: str) -> Path:
+    return BASE_DIR / "cache" / "map_tiles" / str(provider or _MPV88_DARK_PROVIDER)
+
+
+def _mpv88_tile_path(provider: str, z: int, x: int, y: int) -> Path:
+    return _mpv88_tile_cache_dir(provider) / str(int(z)) / str(int(x)) / f"{int(y)}.png"
+
+
+def _mp_map_tile_path(z: int, x: int, y: int) -> Path:
+    # Compatibility for older helper functions that do not pass a provider.
+    return _mpv88_tile_path(_MPV88_DARK_PROVIDER, z, x, y)
+
+
+def _mpv88_tile_url(provider: str, z: int, x: int, y: int) -> str:
+    if provider == _MPV88_OSM_PROVIDER:
+        return f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    sub = _MP_TILE_SUBDOMAINS[(int(x) + int(y)) % len(_MP_TILE_SUBDOMAINS)]
+    return f"https://{sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+
+
+def _mpv88_schedule_tile_download(widget, provider: str, z: int, x: int, y: int, path: Path) -> None:
+    key = (str(provider), int(z), int(x), int(y))
+    with _MPV88_TILE_LOCK:
+        if key in _MPV88_TILE_PENDING:
+            return
+        _MPV88_TILE_PENDING.add(key)
+
+    def _worker():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            from urllib.request import Request, urlopen
+            req = Request(
+                _mpv88_tile_url(provider, z, x, y),
+                headers={
+                    "User-Agent": "MEDPOV-FRIDAY-Command-Center/2.8.8 (OpenStreetMap city map cache)",
+                    "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+                },
+            )
+            with urlopen(req, timeout=9) as resp:
+                data = resp.read()
+            if data:
+                tmp.write_bytes(data)
+                tmp.replace(path)
+        except Exception:
+            pass
+        finally:
+            with _MPV88_TILE_LOCK:
+                _MPV88_TILE_PENDING.discard(key)
+            try:
+                widget.update()
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _mp_map_schedule_tile_download(widget, z: int, x: int, y: int, path: Path) -> None:
+    _mpv88_schedule_tile_download(widget, _MPV88_DARK_PROVIDER, z, x, y, path)
+
+
+def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
+    """Draw map tiles. WORLD uses OSM; threat/live use dark dashboard tiles."""
+    _mp_map_init(self)
+
+    provider = _mpv88_tile_provider(self)
+    is_osm = provider == _MPV88_OSM_PROVIDER
+    z = _mp_map_tile_zoom(self)
+    n = 2 ** z
+    world_size = _MP_TILE_SIZE * n
+
+    center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+
+    left_world = center_px.x() - rect.width() / 2.0
+    top_world = center_px.y() - rect.height() / 2.0
+    right_world = center_px.x() + rect.width() / 2.0
+    bottom_world = center_px.y() + rect.height() / 2.0
+
+    start_tx = int(math.floor(left_world / _MP_TILE_SIZE)) - 1
+    end_tx = int(math.floor(right_world / _MP_TILE_SIZE)) + 1
+    start_ty = max(0, int(math.floor(top_world / _MP_TILE_SIZE)) - 1)
+    end_ty = min(n - 1, int(math.floor(bottom_world / _MP_TILE_SIZE)) + 1)
+
+    loaded = 0
+
+    p.save()
+    p.setClipRect(rect)
+
+    if is_osm:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol("#d8d3c6", 255)))
+        p.drawRect(rect)
+    else:
+        base = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        base.setColorAt(0.00, qcol(_MPV6_MAP_TOP_SEA if "_MPV6_MAP_TOP_SEA" in globals() else "#1E1F21", 255))
+        base.setColorAt(0.58, qcol("#121719", 255))
+        base.setColorAt(0.82, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA if "_MPV6_MAP_BOTTOM_ANTARCTICA" in globals() else "#08100F", 255))
+        base.setColorAt(1.00, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA if "_MPV6_MAP_BOTTOM_ANTARCTICA" in globals() else "#08100F", 255))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(base))
+        p.drawRect(rect)
+
+    for ty in range(start_ty, end_ty + 1):
+        for tx_raw in range(start_tx, end_tx + 1):
+            tx = tx_raw % n
+            path = _mpv88_tile_path(provider, z, tx, ty)
+
+            sx = rect.center().x() + (tx_raw * _MP_TILE_SIZE - center_px.x())
+            sy = rect.center().y() + (ty * _MP_TILE_SIZE - center_px.y())
+            tile_rect = QRectF(sx, sy, _MP_TILE_SIZE + 1, _MP_TILE_SIZE + 1)
+
+            if path.exists():
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    p.drawPixmap(tile_rect, pix, QRectF(0, 0, pix.width(), pix.height()))
+                    loaded += 1
+                    continue
+
+            p.setPen(QPen(qcol(C.PRI, 10 if is_osm else 16), 1))
+            p.setBrush(QBrush(qcol("#d8d3c6" if is_osm else "#06111d", 225 if is_osm else 190)))
+            p.drawRect(tile_rect)
+            _mpv88_schedule_tile_download(self, provider, z, tx, ty, path)
+
+    if not is_osm:
+        # Keep the top/bottom seam fix for the dark Security Center map.
+        world_top_screen_y = rect.center().y() - center_px.y()
+        if world_top_screen_y > rect.top():
+            top_bottom = min(rect.bottom(), world_top_screen_y)
+            sea = _MPV6_MAP_TOP_SEA if "_MPV6_MAP_TOP_SEA" in globals() else "#1E1F21"
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(qcol(sea, 255)))
+            p.drawRect(QRectF(rect.left(), rect.top(), rect.width(), top_bottom - rect.top()))
+
+        world_bottom_screen_y = rect.center().y() + world_size - center_px.y()
+        if world_bottom_screen_y < rect.bottom():
+            bottom_top = max(rect.top(), world_bottom_screen_y)
+            ant = _MPV6_MAP_BOTTOM_ANTARCTICA if "_MPV6_MAP_BOTTOM_ANTARCTICA" in globals() else "#08100F"
+            p.setBrush(QBrush(qcol(ant, 255)))
+            p.drawRect(QRectF(rect.left(), bottom_top, rect.width(), rect.bottom() - bottom_top))
+
+    shade = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    if is_osm:
+        # Very light tint: OSM labels and street detail must stay readable.
+        shade.setColorAt(0.00, qcol("#00131a", 22))
+        shade.setColorAt(0.55, qcol("#00131a", 10))
+        shade.setColorAt(1.00, qcol("#050006", 28))
+    else:
+        shade.setColorAt(0.00, qcol("#00050a", 72))
+        shade.setColorAt(0.45, qcol("#00131a", 36))
+        shade.setColorAt(1.00, qcol("#050006", 88))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(shade))
+    p.drawRect(rect)
+
+    if loaded == 0:
+        if not is_osm:
+            _mp_map_draw_land(self, p, rect)
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.setPen(qcol("#1e3440" if is_osm else C.TEXT_DIM, 190))
+        msg = "OpenStreetMap city tiles are loading and will be cached locally." if is_osm else "Dark security map tiles are loading and will be cached locally."
+        p.drawText(
+            QRectF(rect.left() + 24, rect.bottom() - 28, rect.width() - 48, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            msg,
+        )
+
+    p.restore()
+    return loaded
+
+
+def _mpv88_globe_rect(rect: QRectF) -> QRectF:
+    size = min(rect.width() * 0.88, rect.height() * 0.88)
+    cx = rect.center().x()
+    cy = rect.center().y() + min(26.0, rect.height() * 0.03)
+    return QRectF(cx - size / 2.0, cy - size / 2.0, size, size)
+
+
+def _mpv88_globe_project(self, lat: float, lng: float, globe: QRectF):
+    try:
+        lat = math.radians(_mp_map_clip_lat(float(lat)))
+        lng = math.radians(_mp_map_norm_lng(float(lng)))
+        center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+        lat0 = math.radians(_mp_map_clip_lat(float(center_lat)))
+        lng0 = math.radians(_mp_map_norm_lng(float(center_lng)))
+        dlng = lng - lng0
+        # Keep angular distance shortest.
+        while dlng > math.pi:
+            dlng -= 2.0 * math.pi
+        while dlng < -math.pi:
+            dlng += 2.0 * math.pi
+
+        cosc = math.sin(lat0) * math.sin(lat) + math.cos(lat0) * math.cos(lat) * math.cos(dlng)
+        if cosc < -0.04:
+            return None
+        r = min(globe.width(), globe.height()) / 2.0 * 0.985
+        x = r * math.cos(lat) * math.sin(dlng)
+        y = -r * (math.cos(lat0) * math.sin(lat) - math.sin(lat0) * math.cos(lat) * math.cos(dlng))
+        return QPointF(globe.center().x() + x, globe.center().y() + y), max(0.0, min(1.0, cosc))
+    except Exception:
+        return None
+
+
+def _mpv88_draw_globe_grid(self, p: QPainter, globe: QRectF):
+    p.save()
+    circle = QPainterPath()
+    circle.addEllipse(globe)
+    p.setClipPath(circle)
+    p.setPen(QPen(qcol(C.PRI, 38), 1.0))
+
+    for lng in range(-180, 181, 20):
+        path = QPainterPath()
+        started = False
+        for lat in range(-80, 81, 4):
+            hit = _mpv88_globe_project(self, lat, lng, globe)
+            if not hit:
+                started = False
+                continue
+            pt, _ = hit
+            if not started:
+                path.moveTo(pt)
+                started = True
+            else:
+                path.lineTo(pt)
+        p.drawPath(path)
+
+    for lat in range(-60, 81, 20):
+        path = QPainterPath()
+        started = False
+        for lng in range(-180, 181, 4):
+            hit = _mpv88_globe_project(self, lat, lng, globe)
+            if not hit:
+                started = False
+                continue
+            pt, _ = hit
+            if not started:
+                path.moveTo(pt)
+                started = True
+            else:
+                path.lineTo(pt)
+        p.drawPath(path)
+    p.restore()
+
+
+def _mpv88_draw_globe_points(self, p: QPainter, globe: QRectF, items: list, kind: str, limit: int):
+    for i, item in enumerate(items[:limit]):
+        try:
+            hit = _mpv88_globe_project(self, float(item.get("lat")), float(item.get("lng")), globe)
+        except Exception:
+            hit = None
+        if not hit:
+            continue
+        pt, facing = hit
+        source = item.get("source") if isinstance(item.get("source"), dict) else item
+        risk = str(source.get("risk") or item.get("risk") or "LOW")
+        color = _mp_map_risk_color(risk, kind)
+        pulse = (math.sin((getattr(self, "_tick", 0) * 0.18) + i) + 1) * .5
+        radius = (4.5 + pulse * 2.0) * (0.70 + facing * 0.35)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(color, int(32 + 52 * facing))))
+        p.drawEllipse(pt, radius * 3.6, radius * 3.6)
+        p.setBrush(QBrush(qcol(color, int(150 + 95 * facing))))
+        p.drawEllipse(pt, radius, radius)
+        if i < 16 and facing > 0.15:
+            label = str(source.get("city") or source.get("label") or source.get("country") or source.get("ip") or "")[:20]
+            if label:
+                p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+                p.setPen(qcol("#eaffff", int(125 + 105 * facing)))
+                p.drawText(QRectF(pt.x() + 8, pt.y() - 9, 130, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+
+def _mpv88_draw_globe_target(self, p: QPainter, globe: QRectF):
+    target = _mpv81_default_target(self) if "_mpv81_default_target" in globals() else {"lat": 41.0082, "lng": 28.9784, "url": "medpov.com"}
+    try:
+        hit = _mpv88_globe_project(self, float(target.get("lat")), float(target.get("lng")), globe)
+    except Exception:
+        hit = None
+    if not hit:
+        return
+    pt, facing = hit
+    pulse = (math.sin(getattr(self, "_tick", 0) * .12) + 1) * .5
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol(C.PRI, int(38 + 40 * facing))))
+    p.drawEllipse(pt, 18 + pulse * 8, 18 + pulse * 8)
+    p.setBrush(QBrush(qcol(C.PRI, int(170 + 70 * facing))))
+    p.drawEllipse(pt, 6.5, 6.5)
+    p.setPen(QPen(qcol("#ffffff", int(180 + 55 * facing)), 1.5))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(pt, 11.0, 11.0)
+    label = str(target.get("url") or target.get("label") or "Protected website")[:28]
+    p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", int(170 + 60 * facing)))
+    p.drawText(QRectF(pt.x() + 14, pt.y() - 14, 190, 28), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+
+def _mpv88_trace_points(trace: dict):
+    if not isinstance(trace, dict):
+        return []
+    pts = trace.get("curve_points")
+    if isinstance(pts, list) and len(pts) >= 2:
+        out = []
+        for pair in pts:
+            try:
+                out.append((float(pair[0]), float(pair[1])))
+            except Exception:
+                pass
+        if len(out) >= 2:
+            return out
+    src = trace.get("from") or {}
+    dst = trace.get("to") or {}
+    try:
+        return [(float(src.get("lat")), float(src.get("lng"))), (float(dst.get("lat")), float(dst.get("lng")))]
+    except Exception:
+        return []
+
+
+def _mpv88_draw_globe_trace(self, p: QPainter, globe: QRectF, trace: dict, kind: str):
+    pts = _mpv88_trace_points(trace)
+    if len(pts) < 2:
+        return
+    style = trace.get("style") if isinstance(trace, dict) else {}
+    style = style if isinstance(style, dict) else {}
+    color = style.get("color") or (C.GREEN if kind == "live" else C.ACC)
+    p.setPen(QPen(qcol(str(color), 150), max(1.0, float(style.get("weight", 2) or 2)), Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap))
+    path = QPainterPath()
+    started = False
+    for lat, lng in pts:
+        hit = _mpv88_globe_project(self, lat, lng, globe)
+        if not hit:
+            started = False
+            continue
+        pt, _ = hit
+        if not started:
+            path.moveTo(pt)
+            started = True
+        else:
+            path.lineTo(pt)
+    if not path.isEmpty():
+        p.drawPath(path)
+
+
+def _mpv88_draw_3d_globe_map(self, p: QPainter, w: float, h: float):
+    _mp_map_init(self)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    bg = QRadialGradient(QPointF(w * .52, h * .48), max(w, h) * .76)
+    bg.setColorAt(0, qcol("#071b24", 255))
+    bg.setColorAt(.50, qcol("#06101a", 255))
+    bg.setColorAt(1, qcol("#01050b", 255))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(bg))
+    p.drawRect(0, 0, int(w), int(h))
+
+    rect = _mp_map_widget_rect(self)
+    p.setPen(QPen(qcol(C.PRI, 58), 1.0))
+    p.setBrush(QBrush(qcol("#020812", 92)))
+    p.drawRoundedRect(rect, 12, 12)
+
+    globe = _mpv88_globe_rect(rect)
+    halo = QRadialGradient(globe.center(), globe.width() * .62)
+    halo.setColorAt(0.00, qcol(C.PRI, 40))
+    halo.setColorAt(0.72, qcol(C.PRI, 8))
+    halo.setColorAt(1.00, qcol(C.PRI, 0))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(halo))
+    p.drawEllipse(globe.adjusted(-38, -38, 38, 38))
+
+    p.save()
+    circle = QPainterPath()
+    circle.addEllipse(globe)
+    p.setClipPath(circle)
+    _mp_map_draw_real_tiles(self, p, globe)
+
+    # 3D depth overlay: left light, right shadow, lower atmosphere.
+    lens = QLinearGradient(globe.topLeft(), globe.bottomRight())
+    lens.setColorAt(0.00, qcol("#ffffff", 38 if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else 16))
+    lens.setColorAt(0.45, qcol("#00eaff", 10))
+    lens.setColorAt(1.00, qcol("#000000", 126))
+    p.setBrush(QBrush(lens))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(globe)
+
+    rim_shadow = QRadialGradient(QPointF(globe.center().x() + globe.width() * .15, globe.center().y() + globe.height() * .08), globe.width() * .58)
+    rim_shadow.setColorAt(0.00, qcol("#000000", 0))
+    rim_shadow.setColorAt(0.68, qcol("#000000", 18))
+    rim_shadow.setColorAt(1.00, qcol("#000000", 145))
+    p.setBrush(QBrush(rim_shadow))
+    p.drawEllipse(globe)
+    _mpv88_draw_globe_grid(self, p, globe)
+
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower()
+    threat_on = mode in {"threat", "both", "map", "map-data"}
+    live_on = mode in {"live", "both"}
+    if threat_on:
+        for tr in _mp_map_extract_traces(self, "threat")[:80]:
+            _mpv88_draw_globe_trace(self, p, globe, tr, "threat")
+    if live_on:
+        for tr in _mp_map_extract_traces(self, "live")[:90]:
+            _mpv88_draw_globe_trace(self, p, globe, tr, "live")
+
+    clean_world = (
+        mode in {"world", "blank", "empty", "global", "global-map"}
+        and not (_mp_map_extract_points(self, "threat") or _mp_map_extract_traces(self, "threat"))
+        and not (_mp_map_extract_points(self, "live") or _mp_map_extract_traces(self, "live"))
+        and not (isinstance(getattr(self, "_security_map_data", {}), dict) and getattr(self, "_security_map_data", {}).get("target"))
+    )
+    if not clean_world:
+        _mpv88_draw_globe_target(self, p, globe)
+    if threat_on:
+        _mpv88_draw_globe_points(self, p, globe, _mp_map_extract_points(self, "threat"), "threat", 80)
+    if live_on:
+        _mpv88_draw_globe_points(self, p, globe, _mp_map_extract_points(self, "live"), "live", 90)
+
+    p.restore()
+
+    p.setPen(QPen(qcol(C.PRI, 210), 2.0))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(globe)
+    p.setPen(QPen(qcol("#ffffff", 42), 1.0))
+    p.drawEllipse(globe.adjusted(8, 8, -8, -8))
+
+    try:
+        _mpv81_draw_red_map_frame(self, p, rect)
+    except Exception:
+        pass
+    _mp_map_draw_hud_panel(self, p, rect, w, h)
+    try:
+        _mpv81_draw_protected_site_badge(self, p, rect)
+    except Exception:
+        pass
+    try:
+        self._draw_mini_friday_core(p, w, h)
+    except Exception:
+        pass
+
+
+def _mp_map_draw(self, p: QPainter, w: float, h: float):
+    if _mpv88_map_view_mode(self) == "3d":
+        return _mpv88_draw_3d_globe_map(self, p, w, h)
+
+    _mp_map_init(self)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+    bg = QRadialGradient(QPointF(w * .52, h * .48), max(w, h) * .76)
+    bg.setColorAt(0, qcol("#071b24", 255))
+    bg.setColorAt(.50, qcol("#06101a", 255))
+    bg.setColorAt(1, qcol("#01050b", 255))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(bg))
+    p.drawRect(0, 0, int(w), int(h))
+
+    rect = _mp_map_widget_rect(self)
+    p.setPen(QPen(qcol(C.PRI, 58), 1.0))
+    p.setBrush(QBrush(qcol("#020812", 92)))
+    p.drawRoundedRect(rect, 12, 12)
+
+    _mp_map_draw_real_tiles(self, p, rect)
+
+    p.save()
+    p.setClipRect(rect.adjusted(1, 1, -1, -1))
+
+    for gx, gy, col, alpha, scale in [
+        (0.24, 0.44, C.ACC, 16 if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else 22, 0.22),
+        (0.54, 0.43, C.PRI, 18 if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else 30, 0.25),
+        (0.78, 0.46, C.RED, 12 if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else 23, 0.24),
+        (0.58, 0.74, C.GREEN, 10 if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else 16, 0.20),
+    ]:
+        center = QPointF(rect.left() + rect.width() * gx, rect.top() + rect.height() * gy)
+        g = QRadialGradient(center, rect.width() * scale)
+        g.setColorAt(0, qcol(col, alpha))
+        g.setColorAt(1, qcol(col, 0))
+        p.setBrush(QBrush(g))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(center, rect.width() * scale, rect.width() * scale)
+
+    if _mpv88_tile_provider(self) != _MPV88_OSM_PROVIDER:
+        _mp_map_draw_city_labels(self, p, rect)
+
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower()
+    threat_on = mode in {"threat", "both", "map", "map-data"}
+    live_on = mode in {"live", "both"}
+
+    if threat_on:
+        for tr in _mp_map_extract_traces(self, "threat")[:100]:
+            _mp_map_draw_trace(self, p, rect, tr, "threat")
+    if live_on:
+        for tr in _mp_map_extract_traces(self, "live")[:120]:
+            _mp_map_draw_trace(self, p, rect, tr, "live")
+
+    clean_world = (
+        mode in {"world", "blank", "empty", "global", "global-map"}
+        and not (_mp_map_extract_points(self, "threat") or _mp_map_extract_traces(self, "threat"))
+        and not (_mp_map_extract_points(self, "live") or _mp_map_extract_traces(self, "live"))
+        and not (isinstance(getattr(self, "_security_map_data", {}), dict) and getattr(self, "_security_map_data", {}).get("target"))
+    )
+    if not clean_world:
+        _mp_map_draw_target(self, p, rect)
+
+    if threat_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "threat")[:90]):
+            _mp_map_draw_point(self, p, rect, item, "threat", i)
+    if live_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "live")[:110]):
+            _mp_map_draw_point(self, p, rect, item, "live", i)
+
+    if float(getattr(self, "_security_map_zoom", 1.0) or 1.0) > 3.0:
+        cx, cy = rect.center().x(), rect.center().y()
+        p.setPen(QPen(qcol(C.PRI, 92), 1.0))
+        p.drawLine(QPointF(cx - 18, cy), QPointF(cx + 18, cy))
+        p.drawLine(QPointF(cx, cy - 18), QPointF(cx, cy + 18))
+        p.setPen(QPen(qcol(C.PRI, 58), 1.0))
+        p.drawEllipse(QPointF(cx, cy), 26, 26)
+    p.restore()
+
+    try:
+        _mpv81_draw_red_map_frame(self, p, rect)
+    except Exception:
+        pass
+    _mp_map_draw_hud_panel(self, p, rect, w, h)
+    try:
+        _mpv81_draw_protected_site_badge(self, p, rect)
+    except Exception:
+        pass
+    try:
+        self._draw_mini_friday_core(p, w, h)
+    except Exception:
+        pass
+
+
+def _mpv88_hud_wheel_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)):
+        pos = _mp_map_event_pos(event)
+        rect = _mp_map_widget_rect(self)
+        if rect.contains(pos):
+            before_geo = _mp_map_screen_to_latlng(self, pos, rect)
+            try:
+                delta = event.angleDelta().y()
+            except Exception:
+                delta = 0
+
+            current = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+            if delta > 0:
+                self._security_map_zoom = min(18.0, current * (1.18 if current >= 2.0 else 1.25))
+            else:
+                self._security_map_zoom = max(1.0, current / (1.18 if current >= 2.0 else 1.25))
+
+            after_geo = _mp_map_screen_to_latlng(self, pos, rect)
+            if before_geo and after_geo:
+                center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+                self._security_map_center = (
+                    _mp_map_clip_lat(float(center_lat) + (before_geo[0] - after_geo[0])),
+                    _mp_map_norm_lng(float(center_lng) + (before_geo[1] - after_geo[1])),
+                )
+
+            provider_label = "OpenStreetMap street zoom" if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else "Security map zoom"
+            self._security_map_notice = f"{provider_label} active · z{_mp_map_tile_zoom(self)} · drag to move."
+            self.update()
+            event.accept()
+            return
+
+    if _MPV6_ORIGINAL_HUD_WHEEL:
+        return _MPV6_ORIGINAL_HUD_WHEEL(self, event)
+
+
+def _mpv88_hud_mouse_double_click_event(self, event):
+    if bool(getattr(self, "security_map_mode", False)) and not bool(getattr(self, "camera_mode", False)):
+        pos = _mp_map_event_pos(event)
+        rect = _mp_map_widget_rect(self)
+        if rect.contains(pos):
+            geo = _mp_map_screen_to_latlng(self, pos, rect)
+            if geo:
+                self._security_map_center = geo
+                self._security_map_zoom = min(18.0, float(getattr(self, "_security_map_zoom", 1.0) or 1.0) * 1.55)
+                self._security_map_focus_label = "Manual"
+                self._security_map_notice = f"Manual zoom point selected · z{_mp_map_tile_zoom(self)}."
+                self.update()
+            event.accept()
+            return
+
+    if _MPV6_ORIGINAL_HUD_MOUSE_DOUBLE:
+        return _MPV6_ORIGINAL_HUD_MOUSE_DOUBLE(self, event)
+
+
+def _mpv88_focus_security_map(self, place: str):
+    _mp_map_init(self)
+    hit = _mp_map_find_place(place)
+    if not hit:
+        self._security_map_notice = f"Unknown focus target: {place}"
+        self.update()
+        return False
+    lat, lng, label = hit
+    self.security_map_mode = True
+    self.camera_mode = False
+    self.state = "MAP"
+    self._security_map_center = (float(lat), float(lng))
+    # Country focus stays wider; city focus opens close enough to continue into street level with wheel.
+    self._security_map_zoom = 4.2 if str(label).lower() in {"türkiye", "turkiye", "turkey"} else 7.6
+    self._security_map_focus_label = label
+    self._security_map_notice = f"Focused on {label} · OpenStreetMap street zoom ready."
+    self.update()
+    return True
+
+
+def _mpv88_start_security_map(self, mode="world", map_data=None, focus=""):
+    _mp_map_init(self)
+    self.security_map_mode = True
+    try:
+        self.stop_camera_capture_only()
+    except Exception:
+        pass
+    self.camera_mode = False
+    self.state = "MAP"
+    self._security_map_active_mode = (mode or "world").lower().strip()
+    self._security_map_data = map_data if isinstance(map_data, dict) else {}
+    self._security_map_notice = "OpenStreetMap normal map ready." if _mpv88_is_world_mode(self) else "Security Center map intelligence loaded."
+
+    place = _mp_map_find_place(focus)
+    if place:
+        lat, lng, label = place
+        self._security_map_center = (lat, lng)
+        self._security_map_zoom = 7.6
+        self._security_map_focus_label = label
+    elif self._security_map_data.get("target") and self._security_map_active_mode in {"threat", "live", "both"}:
+        target = self._security_map_data.get("target") or {}
+        try:
+            self._security_map_center = (float(target.get("lat", 28.0)), float(target.get("lng", 18.0)))
+            self._security_map_zoom = 2.2
+            self._security_map_focus_label = str(target.get("url") or target.get("label") or "Protected target")
+        except Exception:
+            self._security_map_center = (18.0, 28.0)
+            self._security_map_zoom = 1.0
+            self._security_map_focus_label = "World"
+    else:
+        self._security_map_center = (18.0, 28.0)
+        self._security_map_zoom = 1.0
+        self._security_map_focus_label = "World"
+    self.update()
+    return True
+
+
+def _mpv88_hud_paint_event(self, event):
+    if bool(getattr(self, "camera_mode", False)):
+        try:
+            return _MPV6_ORIGINAL_HUD_PAINT(self, event)
+        except Exception:
+            pass
+
+    if bool(getattr(self, "security_map_mode", False)):
+        p = QPainter(self)
+        _mp_map_draw(self, p, float(self.width()), float(self.height()))
+        p.end()
+        return
+
+    try:
+        return _MPV6_ORIGINAL_HUD_PAINT(self, event)
+    except Exception:
+        pass
+
+
+try:
+    HudCanvas.paintEvent = _mpv88_hud_paint_event
+    HudCanvas.wheelEvent = _mpv88_hud_wheel_event
+    HudCanvas.mouseDoubleClickEvent = _mpv88_hud_mouse_double_click_event
+    HudCanvas.focus_security_map = _mpv88_focus_security_map
+    HudCanvas.start_security_map_mode = _mpv88_start_security_map
+except Exception as _mpv88_map_patch_error:
+    try:
+        print("[FRIDAY UI] OSM / 3D map patch install error:", _mpv88_map_patch_error)
+    except Exception:
+        pass
+
+# === /MEDPOV FRIDAY v2.8.8 OSM + 2D/3D MAP PATCH ===

@@ -27,6 +27,8 @@ DEFAULT_OPENAI_VISION_MODEL = "gpt-4.1-mini"
 DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime"
 DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_VOICE = "marin"
+DEFAULT_MAP_VIEW_MODE = "2d"
+DEFAULT_MAP_MAX_ZOOM = 18
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
     {"name": "Aoede", "group": "Female", "label": "Aoede · Female / soft"},
@@ -71,6 +73,10 @@ DEFAULTS: Dict[str, Any] = {
     },
     "privacy": {
         "camera_enabled": DEFAULT_CAMERA_ENABLED,
+    },
+    "map": {
+        "view_mode": DEFAULT_MAP_VIEW_MODE,
+        "max_zoom": DEFAULT_MAP_MAX_ZOOM,
     },
     "security_center": {
         "base_url": DEFAULT_SECURITY_CENTER_BASE_URL,
@@ -202,6 +208,12 @@ def load_settings() -> Dict[str, Any]:
     settings["assistant"]["ui_language"] = normalize_ui_language(settings["assistant"].get("ui_language"))
     settings.setdefault("privacy", {}).setdefault("camera_enabled", DEFAULT_CAMERA_ENABLED)
     settings["privacy"]["camera_enabled"] = normalize_camera_enabled(settings["privacy"].get("camera_enabled"))
+    settings.setdefault("map", {}).setdefault("view_mode", DEFAULT_MAP_VIEW_MODE)
+    settings["map"]["view_mode"] = normalize_map_view_mode(settings["map"].get("view_mode"))
+    try:
+        settings["map"]["max_zoom"] = max(5, min(19, int(settings["map"].get("max_zoom") or DEFAULT_MAP_MAX_ZOOM)))
+    except Exception:
+        settings["map"]["max_zoom"] = DEFAULT_MAP_MAX_ZOOM
     settings["assistant"]["ai_provider"] = normalize_ai_provider(settings["assistant"].get("ai_provider"))
     settings["assistant"]["fallback_provider"] = normalize_fallback_provider(settings["assistant"].get("fallback_provider"))
     settings.setdefault("gemini", {}).setdefault("model", DEFAULT_GEMINI_MODEL)
@@ -227,6 +239,13 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged.setdefault("privacy", {})["camera_enabled"] = normalize_camera_enabled(
         merged.get("privacy", {}).get("camera_enabled")
     )
+    merged.setdefault("map", {})["view_mode"] = normalize_map_view_mode(
+        merged.get("map", {}).get("view_mode")
+    )
+    try:
+        merged["map"]["max_zoom"] = max(5, min(19, int(merged.get("map", {}).get("max_zoom") or DEFAULT_MAP_MAX_ZOOM)))
+    except Exception:
+        merged["map"]["max_zoom"] = DEFAULT_MAP_MAX_ZOOM
     merged["assistant"]["ai_provider"] = normalize_ai_provider(merged.get("assistant", {}).get("ai_provider"))
     merged["assistant"]["fallback_provider"] = normalize_fallback_provider(merged.get("assistant", {}).get("fallback_provider"))
     merged.setdefault("openai", {})
@@ -330,6 +349,13 @@ def normalize_ui_language(value: Any) -> str:
     return DEFAULT_UI_LANGUAGE
 
 
+def normalize_map_view_mode(value: Any) -> str:
+    raw = str(value or DEFAULT_MAP_VIEW_MODE).strip().lower().replace(" ", "").replace("-", "")
+    if raw in {"3d", "globe", "sphere", "kure", "küre"}:
+        return "3d"
+    return "2d"
+
+
 def normalize_camera_enabled(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -363,6 +389,17 @@ def get_friday_ui_language() -> str:
 
 def get_friday_ui_language_label() -> str:
     return "Türkçe" if get_friday_ui_language() == "tr" else "English"
+
+
+def get_friday_map_view_mode() -> str:
+    return normalize_map_view_mode(load_settings().get("map", {}).get("view_mode"))
+
+
+def get_friday_map_max_zoom() -> int:
+    try:
+        return max(5, min(19, int(load_settings().get("map", {}).get("max_zoom") or DEFAULT_MAP_MAX_ZOOM)))
+    except Exception:
+        return DEFAULT_MAP_MAX_ZOOM
 
 
 def get_friday_camera_enabled() -> bool:

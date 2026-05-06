@@ -183,6 +183,7 @@ class FridaySettingsDialog(QDialog):
         tabs.addTab(self._security_tab(), "Security Center")
         tabs.addTab(self._gemini_tab(), "Gemini")
         tabs.addTab(self._openai_tab(), "OpenAI")
+        tabs.addTab(self._map_tab(), "Map")
         tabs.addTab(self._privacy_tab(), "Privacy / Camera")
         root.addWidget(tabs)
         self.result_box = QTextEdit()
@@ -336,6 +337,31 @@ class FridaySettingsDialog(QDialog):
         form.addRow("", info)
         return w
 
+    def _map_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.map_view_mode = QComboBox()
+        self.map_view_mode.addItem("2D map · normal navigation", "2d")
+        self.map_view_mode.addItem("3D globe · spherical command view", "3d")
+
+        self.map_max_zoom = QLineEdit("18")
+        self.map_max_zoom.setToolTip("OpenStreetMap street tile zoom limit. Recommended: 18")
+
+        info = QLabel(
+            "Global / normal map uses OpenStreetMap street tiles so FRIDAY can zoom down to city and street level. "
+            "Threat and live Security Center layers keep the dark security dashboard map. "
+            "Switching to 3D renders the same map intelligence on a globe-style HUD."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8fa1b8;")
+
+        form.addRow("Security Map View", self.map_view_mode)
+        form.addRow("Max city zoom", self.map_max_zoom)
+        form.addRow("", info)
+        return w
+
     def _privacy_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
@@ -390,6 +416,14 @@ class FridaySettingsDialog(QDialog):
         voice_idx = self.openai_voice.findData(str(openai.get("voice") or DEFAULT_OPENAI_VOICE))
         if voice_idx >= 0:
             self.openai_voice.setCurrentIndex(voice_idx)
+        map_settings = s.get("map", {}) if isinstance(s.get("map", {}), dict) else {}
+        map_mode = str(map_settings.get("view_mode") or "2d").lower().strip()
+        if map_mode not in {"2d", "3d"}:
+            map_mode = "2d"
+        map_idx = self.map_view_mode.findData(map_mode)
+        if map_idx >= 0:
+            self.map_view_mode.setCurrentIndex(map_idx)
+        self.map_max_zoom.setText(str(map_settings.get("max_zoom") or 18))
         self.camera_enabled.setChecked(bool(s.get("privacy", {}).get("camera_enabled", get_friday_camera_enabled())))
 
     def _refresh_sc_endpoint_preview(self) -> None:
@@ -421,6 +455,7 @@ class FridaySettingsDialog(QDialog):
                 "tts_model": self.openai_tts_model.text().strip() or DEFAULT_OPENAI_TTS_MODEL,
                 "voice": str(self.openai_voice.currentData() or DEFAULT_OPENAI_VOICE),
             },
+            "map": {"view_mode": str(self.map_view_mode.currentData() or "2d"), "max_zoom": max(5, min(19, int((self.map_max_zoom.text().strip() or "18"))))},
             "privacy": {"camera_enabled": bool(self.camera_enabled.isChecked())},
         }
 
