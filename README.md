@@ -1,3 +1,5 @@
+![Version](https://img.shields.io/badge/version-2.8.7--blue)
+
 # F.R.I.D.A.Y Command Center
 
 **F.R.I.D.A.Y Command Center v2.8.7** is a local Windows desktop AI command center by **MEDPOV**. It combines a holographic command-center interface, voice and text interaction, camera-assisted desktop analysis, live Security Center map views, local PC controls, file analysis, and independent AI provider support for **Gemini** and **OpenAI**.
