@@ -5583,15 +5583,14 @@ except Exception as _mpv6_map_patch_error:
     except Exception:
         pass
 
-# === MEDPOV FRIDAY MAP PAN / WRAP LINE FIX ONLY ===
-# Fixes broken route lines when dragging the map left/right.
-# No visual redesign, no glow, no red frame, no pulse.
+# === MEDPOV FRIDAY MAP ESSENTIALS ONLY ===
+# Includes only:
+# 1) pan/wrap broken line fix
+# 2) protected website badge
+# 3) red HUD map frame
+
 
 def _mpv81_project_continuous(self, lat: float, lng: float, rect: QRectF) -> QPointF:
-    """
-    Projects lat/lng relative to the current map center.
-    This prevents points/lines from jumping to the duplicated world copy.
-    """
     _mp_map_init(self)
 
     z = _mp_map_tile_zoom(self)
@@ -5607,18 +5606,10 @@ def _mpv81_project_continuous(self, lat: float, lng: float, rect: QRectF) -> QPo
 
 
 def _mp_map_project(self, lat, lng, rect: QRectF):
-    """
-    Override old projection with continuous projection.
-    Important for map panning.
-    """
     return _mpv81_project_continuous(self, float(lat), float(lng), rect)
 
 
 def _mpv81_adjust_lng_to_anchor(lng: float, anchor_lng: float) -> float:
-    """
-    Keeps route source longitude near the target longitude.
-    This is the main anti-wrap fix.
-    """
     lng = float(lng)
     anchor_lng = float(anchor_lng)
 
@@ -5659,9 +5650,6 @@ def _mpv81_trace_endpoint(trace: dict, key: str, fallback: dict | None = None) -
 
 
 def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPainterPath | None:
-    """
-    Builds a route path without allowing wrong world-copy wrap lines.
-    """
     target = _mpv81_default_target(self)
 
     src = _mpv81_trace_endpoint(trace, "from")
@@ -5676,8 +5664,9 @@ def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPaint
 
         src_lat = float(src.get("lat"))
 
-        # Critical fix:
-        # Keep source longitude close to destination longitude.
+        # Main fix:
+        # source longitude is normalized near destination longitude,
+        # so the line does not jump to the duplicated world copy.
         src_lng = _mpv81_adjust_lng_to_anchor(float(src.get("lng")), dst_lng)
 
     except Exception:
@@ -5696,8 +5685,8 @@ def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPaint
     if distance < 10.0:
         return None
 
-    # Critical safety:
-    # If line still becomes extremely wide, it is probably a wrong wrapped world route.
+    # Safety fix:
+    # if the route is still too wide, it is probably a broken wrapped route.
     if abs(dx) > rect.width() * 1.35:
         return None
 
@@ -5715,4 +5704,94 @@ def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPaint
 
     return path
 
-# === /MEDPOV FRIDAY MAP PAN / WRAP LINE FIX ONLY ===
+
+def _mpv81_draw_red_map_frame(self, p: QPainter, rect: QRectF):
+    p.save()
+    p.setClipRect(rect.adjusted(-8, -8, 8, 8))
+
+    red = "#ff3131"
+    soft = "#ff6b35"
+
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    # Thin full red border.
+    p.setPen(QPen(qcol(red, 150), 1.2))
+    p.drawRect(rect.adjusted(1.0, 1.0, -1.0, -1.0))
+
+    # Strong HUD corner lines.
+    line_len = 58.0
+    gap = 11.0
+
+    p.setPen(QPen(qcol(red, 235), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
+
+    corners = [
+        (rect.left(), rect.top(), 1, 1),
+        (rect.right(), rect.top(), -1, 1),
+        (rect.left(), rect.bottom(), 1, -1),
+        (rect.right(), rect.bottom(), -1, -1),
+    ]
+
+    for x, y, sx, sy in corners:
+        p.drawLine(QPointF(x, y + sy * gap), QPointF(x, y + sy * line_len))
+        p.drawLine(QPointF(x + sx * gap, y), QPointF(x + sx * line_len, y))
+
+    # Subtle top/right dashed HUD line.
+    p.setPen(QPen(qcol(soft, 105), 1.0, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap))
+    p.drawLine(QPointF(rect.left() + 92, rect.top() + 9), QPointF(rect.right() - 92, rect.top() + 9))
+    p.drawLine(QPointF(rect.right() - 9, rect.top() + 92), QPointF(rect.right() - 9, rect.bottom() - 92))
+
+    p.restore()
+
+
+def _mpv81_draw_protected_site_badge(self, p: QPainter, rect: QRectF):
+    target = _mpv81_default_target(self)
+
+    label = str(target.get("url") or target.get("label") or "medpov.com")[:34]
+
+    box_w = min(292.0, max(218.0, rect.width() * 0.22))
+    box = QRectF(
+        rect.right() - box_w - 18.0,
+        rect.top() + 20.0,
+        box_w,
+        62.0,
+    )
+
+    p.save()
+
+    p.setPen(QPen(qcol(C.PRI, 70), 1.0))
+    p.setBrush(QBrush(qcol("#061421", 224)))
+    p.drawRoundedRect(box, 12, 12)
+
+    icon = QPointF(box.left() + 28, box.center().y())
+
+    p.setPen(QPen(qcol(C.PRI, 210), 1.2))
+    p.setBrush(QBrush(qcol(C.PRI, 28)))
+    p.drawEllipse(icon, 14, 14)
+    p.drawEllipse(icon, 5, 5)
+
+    p.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+    p.setPen(qcol(C.TEXT_DIM, 215))
+    p.drawText(
+        QRectF(box.left() + 52, box.top() + 11, box.width() - 66, 16),
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        "PROTECTED WEBSITE",
+    )
+
+    p.setFont(QFont("Segoe UI", 9, QFont.Weight.Black))
+    p.setPen(qcol("#ffffff", 235))
+    p.drawText(
+        QRectF(box.left() + 52, box.top() + 29, box.width() - 66, 21),
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        label,
+    )
+
+    p.restore()
+
+
+# Add these calls inside _mp_map_draw(), after p.restore()
+# and before _mp_map_draw_hud_panel(...):
+
+# _mpv81_draw_red_map_frame(self, p, rect)
+# _mpv81_draw_protected_site_badge(self, p, rect)
+
+# === /MEDPOV FRIDAY MAP ESSENTIALS ONLY ===
