@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-2.8.7--blue)
+![Version](https://img.shields.io/badge/version-2.8.7-blue)
 
 # F.R.I.D.A.Y Command Center
 
