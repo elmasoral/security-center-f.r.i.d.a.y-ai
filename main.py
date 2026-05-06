@@ -854,6 +854,89 @@ class FridayLive:
         return False
 
 
+    def _is_ui_muted(self) -> bool:
+        try:
+            return bool(getattr(self.ui, "muted", False))
+        except Exception:
+            return False
+
+    def _safe_log_audio_output_unavailable(self, prefix: str, exc: Exception | str, notice_attr: str) -> None:
+        print(f"{prefix} 🔇 Audio output unavailable: {exc}")
+        if not bool(getattr(self, notice_attr, False)):
+            try:
+                self.ui.write_log("SYS: Audio output unavailable. FRIDAY continues in text/log mode.")
+            except Exception:
+                pass
+            setattr(self, notice_attr, True)
+
+    def _close_audio_stream(self, stream) -> None:
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+    def _select_output_device(self, samplerate: int, channels: int, dtype: str = "int16") -> int | None:
+        try:
+            devices = sd.query_devices()
+        except Exception as exc:
+            raise RuntimeError(f"Cannot query audio devices: {exc}") from exc
+
+        candidates: list[int] = []
+
+        try:
+            default = sd.default.device
+            if isinstance(default, (list, tuple)) and len(default) > 1:
+                idx = int(default[1])
+                if idx >= 0:
+                    candidates.append(idx)
+            elif isinstance(default, int) and int(default) >= 0:
+                candidates.append(int(default))
+        except Exception:
+            pass
+
+        try:
+            for idx, dev in enumerate(devices):
+                try:
+                    if int(dev.get("max_output_channels", 0) or 0) > 0:
+                        candidates.append(int(idx))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        seen: set[int] = set()
+
+        for idx in candidates:
+            if idx in seen:
+                continue
+            seen.add(idx)
+
+            try:
+                dev = devices[idx]
+                if int(dev.get("max_output_channels", 0) or 0) <= 0:
+                    continue
+
+                sd.check_output_settings(
+                    device=idx,
+                    samplerate=int(samplerate),
+                    channels=int(channels),
+                    dtype=dtype,
+                )
+
+                return int(idx)
+            except Exception:
+                continue
+
+        raise RuntimeError(
+            "No usable audio output device found. Check Windows Sound > Output or reinstall the audio driver."
+        )
+
     def _command_provider(self) -> str:
         return str(globals().get("FRIDAY_AI_PROVIDER", "gemini") or "gemini").strip().lower()
 
@@ -2857,28 +2940,16 @@ class FridayLive:
 
     async def _play_audio(self):
         print("[FRIDAY] 🔊 Play started")
-
-        try:
-            stream = sd.RawOutputStream(
-                samplerate=RECEIVE_SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=CHUNK_SIZE,
-            )
-            stream.start()
-        except Exception as e:
-            print(f"[FRIDAY] ❌ Audio output disabled: {e}")
-            self.ui.write_log("SYS: Audio output unavailable. FRIDAY continues in text/log mode.")
-            while True:
-                await self.audio_in_queue.get()
-                self.set_speaking(False)
+        stream = None
+        audio_disabled = False
+        next_retry_at = 0.0
 
         try:
             while True:
                 try:
                     chunk = await asyncio.wait_for(
                         self.audio_in_queue.get(),
-                        timeout=0.1
+                        timeout=0.1,
                     )
                 except asyncio.TimeoutError:
                     if (
@@ -2889,18 +2960,68 @@ class FridayLive:
                         self.set_speaking(False)
                         self._turn_done_event.clear()
                     continue
-                if self.ui.standby or self._is_model_audio_suppressed():
+
+                if (
+                    self._is_ui_muted()
+                    or bool(getattr(self.ui, "standby", False))
+                    or self._is_model_audio_suppressed()
+                ):
+                    self.set_speaking(False)
+                    if stream is not None:
+                        self._close_audio_stream(stream)
+                        stream = None
+                    continue
+
+                if audio_disabled and time.monotonic() < next_retry_at:
                     self.set_speaking(False)
                     continue
-                self.set_speaking(True)
-                await asyncio.to_thread(stream.write, chunk)
-        except Exception as e:
-            print(f"[FRIDAY] ❌ Play: {e}")
-            raise
+
+                if stream is None:
+                    try:
+                        device = self._select_output_device(RECEIVE_SAMPLE_RATE, CHANNELS, "int16")
+                        stream = sd.RawOutputStream(
+                            samplerate=RECEIVE_SAMPLE_RATE,
+                            channels=CHANNELS,
+                            dtype="int16",
+                            blocksize=CHUNK_SIZE,
+                            device=device,
+                        )
+                        stream.start()
+                        audio_disabled = False
+                        self._audio_output_notice_sent = False
+                        print(f"[FRIDAY] 🔊 Audio output device: {device}")
+                    except Exception as exc:
+                        audio_disabled = True
+                        next_retry_at = time.monotonic() + 15.0
+                        self._safe_log_audio_output_unavailable(
+                            "[FRIDAY]",
+                            exc,
+                            "_audio_output_notice_sent",
+                        )
+                        self.set_speaking(False)
+                        self._close_audio_stream(stream)
+                        stream = None
+                        continue
+
+                try:
+                    self.set_speaking(True)
+                    await asyncio.to_thread(stream.write, chunk)
+                except Exception as exc:
+                    audio_disabled = True
+                    next_retry_at = time.monotonic() + 15.0
+                    self._safe_log_audio_output_unavailable(
+                        "[FRIDAY]",
+                        exc,
+                        "_audio_output_notice_sent",
+                    )
+                    self.set_speaking(False)
+                    self._close_audio_stream(stream)
+                    stream = None
+                    continue
+
         finally:
             self.set_speaking(False)
-            stream.stop()
-            stream.close()
+            self._close_audio_stream(stream)
 
     async def run_openai_realtime(self):
         """Run FRIDAY with OpenAI Realtime only.
