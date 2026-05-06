@@ -501,7 +501,7 @@ class HudCanvas(QWidget):
         self.speaking = False
         self.state = "IDLE"
 
-        # MEDPOV FRIDAY camera / Jarvis vision mode
+        # MEDPOV FRIDAY camera / Friday vision mode
         self.camera_mode = False
         self._camera = None
         self._camera_frame: QImage | None = None
@@ -978,7 +978,7 @@ class HudCanvas(QWidget):
         )
 
     # ------------------------------------------------------------------
-    # MEDPOV FRIDAY — Jarvis style camera vision mode
+    # MEDPOV FRIDAY — Friday style camera vision mode
     # ------------------------------------------------------------------
 
     def _preferred_camera_index(self) -> int:
@@ -999,7 +999,7 @@ class HudCanvas(QWidget):
 
     def start_camera_mode(self, camera_index: int | None = None) -> bool:
         """
-        Kamera açıldığında ana FRIDAY core görünümünü Jarvis tarzı kamera moduna alır.
+        Kamera açıldığında ana FRIDAY core görünümünü Friday tarzı kamera moduna alır.
         Orta alanda kamera görüntüsü, sağ altta mini FRIDAY halkaları gösterilir.
         """
         self.camera_mode = True
@@ -1853,7 +1853,7 @@ class LogWidget(QTextEdit):
         tl = (text or "").lower()
         if tl.startswith("you:"):
             return "you"
-        if tl.startswith("jarvis:") or tl.startswith("friday:"):
+        if tl.startswith("friday:") or tl.startswith("friday:"):
             return "ai"
         if tl.startswith("file:"):
             return "file"
@@ -3569,7 +3569,7 @@ class _RootShim:
         pass
 
 
-class JarvisUI:
+class FridayUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
@@ -3662,7 +3662,6 @@ class JarvisUI:
 
 
 # Compatibility alias for the MEDPOV FRIDAY build.
-FridayUI = JarvisUI
 
 
 # --- MEDPOV FRIDAY settings panel bridge ---
@@ -3725,8 +3724,8 @@ def _mp_friday_build_settings_panel(self):
     return box
 
 try:
-    JarvisUI._open_friday_settings_dialog = _mp_friday_open_settings_dialog
-    JarvisUI._build_friday_settings_panel = _mp_friday_build_settings_panel
+    FridayUI._open_friday_settings_dialog = _mp_friday_open_settings_dialog
+    FridayUI._build_friday_settings_panel = _mp_friday_build_settings_panel
 except NameError:
     try:
         MainWindow._open_friday_settings_dialog = _mp_friday_open_settings_dialog
@@ -5542,15 +5541,15 @@ def _mpv6_stop_security_map(self):
     return True
 
 
-def _mpv6_jarvis_open_security_map(self, mode="world", data=None, focus=""):
+def _mpv6_friday_open_security_map(self, mode="world", data=None, focus=""):
     return self._win.start_security_map(mode=mode, data=data or {}, focus=focus or "")
 
 
-def _mpv6_jarvis_focus_security_map(self, place: str):
+def _mpv6_friday_focus_security_map(self, place: str):
     return self._win.focus_security_map(place)
 
 
-def _mpv6_jarvis_stop_security_map(self):
+def _mpv6_friday_stop_security_map(self):
     return self._win.stop_security_map()
 
 try:
@@ -5572,11 +5571,11 @@ try:
     MainWindow.focus_security_map = _mpv6_focus_security_map
     MainWindow.stop_security_map = _mpv6_stop_security_map
 
-    JarvisUI.open_security_map = _mpv6_jarvis_open_security_map
-    JarvisUI.start_security_map = _mpv6_jarvis_open_security_map
-    JarvisUI.focus_security_map = _mpv6_jarvis_focus_security_map
-    JarvisUI.stop_security_map = _mpv6_jarvis_stop_security_map
-    JarvisUI.close_security_map = _mpv6_jarvis_stop_security_map
+    FridayUI.open_security_map = _mpv6_friday_open_security_map
+    FridayUI.start_security_map = _mpv6_friday_open_security_map
+    FridayUI.focus_security_map = _mpv6_friday_focus_security_map
+    FridayUI.stop_security_map = _mpv6_friday_stop_security_map
+    FridayUI.close_security_map = _mpv6_friday_stop_security_map
 except Exception as _mpv6_map_patch_error:
     try:
         print("[FRIDAY UI] security map patch install error:", _mpv6_map_patch_error)

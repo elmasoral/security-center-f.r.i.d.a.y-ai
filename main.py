@@ -19,7 +19,7 @@ try:
     from google.genai import errors as genai_errors
 except Exception:
     genai_errors = None
-from ui import JarvisUI
+from ui import FridayUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
@@ -689,9 +689,9 @@ class _OpenAIToolCallShim:
         self.args = args or {}
 
 
-class JarvisLive:
+class FridayLive:
 
-    def __init__(self, ui: JarvisUI):
+    def __init__(self, ui: FridayUI):
         self.ui             = ui
         self.session        = None
         self.audio_in_queue = None
@@ -2657,10 +2657,10 @@ class JarvisLive:
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
+                friday_speaking = self._is_speaking
             if self._is_assistant_audio_guard_active():
-                jarvis_speaking = True
-            if not jarvis_speaking and not self.ui.muted:
+                friday_speaking = True
+            if not friday_speaking and not self.ui.muted:
                 data = indata.tobytes()
                 if self.ui.standby:
                     self._handle_standby_audio_gate(indata, data, loop)
@@ -3048,16 +3048,16 @@ class JarvisLive:
             await asyncio.sleep(2)
 
 def main():
-    ui = JarvisUI("face.png")
+    ui = FridayUI("face.png")
 
     def runner():
         ui.wait_for_api_key()
-        jarvis = JarvisLive(ui)
+        friday = FridayLive(ui)
         try:
-            if jarvis._use_openai_realtime():
-                asyncio.run(jarvis.run_openai_realtime())
+            if friday._use_openai_realtime():
+                asyncio.run(friday.run_openai_realtime())
             else:
-                asyncio.run(jarvis.run())
+                asyncio.run(friday.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 
