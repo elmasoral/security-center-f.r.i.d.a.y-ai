@@ -549,26 +549,131 @@ class _VisionSession:
             print(f"[Vision] ⚠️  Recv error: {e}")
             raise  
 
+    def _player_is_muted(self) -> bool:
+        try:
+            return bool(getattr(self._player, "muted", False))
+        except Exception:
+            return False
+
+    def _close_audio_stream(self, stream) -> None:
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+    def _select_output_device(self, samplerate: int, channels: int, dtype: str = "int16") -> int:
+        try:
+            devices = sd.query_devices()
+        except Exception as exc:
+            raise RuntimeError(f"Cannot query audio devices: {exc}") from exc
+
+        candidates: list[int] = []
+        try:
+            default = sd.default.device
+            if isinstance(default, (list, tuple)) and len(default) > 1:
+                idx = int(default[1])
+                if idx >= 0:
+                    candidates.append(idx)
+            elif isinstance(default, int) and int(default) >= 0:
+                candidates.append(int(default))
+        except Exception:
+            pass
+
+        try:
+            for idx, dev in enumerate(devices):
+                try:
+                    if int(dev.get("max_output_channels", 0) or 0) > 0:
+                        candidates.append(int(idx))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        seen: set[int] = set()
+        for idx in candidates:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            try:
+                dev = devices[idx]
+                if int(dev.get("max_output_channels", 0) or 0) <= 0:
+                    continue
+                sd.check_output_settings(
+                    device=idx,
+                    samplerate=int(samplerate),
+                    channels=int(channels),
+                    dtype=dtype,
+                )
+                return int(idx)
+            except Exception:
+                continue
+
+        raise RuntimeError("No usable audio output device found. Check Windows Sound > Output or reinstall the audio driver.")
+
     async def _play_loop(self) -> None:
-        stream = sd.RawOutputStream(
-            samplerate=_RECEIVE_SAMPLE_RATE,
-            channels=_CHANNELS,
-            dtype="int16",
-            blocksize=_CHUNK_SIZE,
-        )
-        stream.start()
+        stream = None
+        audio_disabled = False
+        next_retry_at = 0.0
+
         try:
             while True:
                 chunk = await self._audio_in.get()
-                if self._discard_response_until_turn_complete:
+
+                if self._discard_response_until_turn_complete or self._player_is_muted():
+                    if stream is not None:
+                        self._close_audio_stream(stream)
+                        stream = None
                     continue
-                await asyncio.to_thread(stream.write, chunk)
-        except Exception as e:
-            print(f"[Vision] ❌ Play error: {e}")
-            raise
+
+                # If the selected/default Windows output device is broken, keep
+                # the vision session alive and continue showing transcript logs.
+                if audio_disabled and time.monotonic() < next_retry_at:
+                    continue
+
+                if stream is None:
+                    try:
+                        device = self._select_output_device(_RECEIVE_SAMPLE_RATE, _CHANNELS, "int16")
+                        stream = sd.RawOutputStream(
+                            samplerate=_RECEIVE_SAMPLE_RATE,
+                            channels=_CHANNELS,
+                            dtype="int16",
+                            blocksize=_CHUNK_SIZE,
+                            device=device,
+                        )
+                        stream.start()
+                        audio_disabled = False
+                        print(f"[Vision] 🔊 Audio output device: {device}")
+                    except Exception as e:
+                        audio_disabled = True
+                        next_retry_at = time.monotonic() + 15.0
+                        print(f"[Vision] 🔇 Audio output disabled: {e}")
+                        try:
+                            if self._player:
+                                self._player.write_log("SYS: Vision audio output unavailable. Visual analysis continues in text/log mode.")
+                        except Exception:
+                            pass
+                        self._close_audio_stream(stream)
+                        stream = None
+                        continue
+
+                try:
+                    await asyncio.to_thread(stream.write, chunk)
+                except Exception as e:
+                    audio_disabled = True
+                    next_retry_at = time.monotonic() + 15.0
+                    print(f"[Vision] 🔇 Audio output disabled: {e}")
+                    self._close_audio_stream(stream)
+                    stream = None
+                    continue
         finally:
-            stream.stop()
-            stream.close()
+            self._close_audio_stream(stream)
+
 
 _session      = _VisionSession()
 _session_lock = threading.Lock()

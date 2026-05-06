@@ -1,8 +1,8 @@
-![Version](https://img.shields.io/badge/version-2.8.7-blue)
+![Version](https://img.shields.io/badge/version-2.8.10-blue)
 
 # F.R.I.D.A.Y Command Center
 
-**F.R.I.D.A.Y Command Center v2.8.7** is a local Windows desktop AI command center by **MEDPOV**. It combines a holographic command-center interface, voice and text interaction, camera-assisted desktop analysis, live Security Center map views, local PC controls, file analysis, and independent AI provider support for **Gemini** and **OpenAI**.
+**F.R.I.D.A.Y Command Center v2.8.10** is a local Windows desktop AI command center by **MEDPOV**. It combines a holographic command-center interface, voice and text interaction, camera-assisted desktop analysis, live Security Center map views, local PC controls, file analysis, and independent AI provider support for **Gemini** and **OpenAI**.
 
 Designed by **MEDPOV**.
 
@@ -15,7 +15,7 @@ https://medpov.com/product/medpov-security-center
 
 ---
 
-## Version 2.8.7 Highlights
+## Version 2.8.10 Highlights
 
 | Area | What Changed |
 |---|---|
@@ -331,7 +331,7 @@ After changing provider, model, voice, camera, or language settings, restart F.R
 
 ## Gemini and OpenAI Provider Separation
 
-F.R.I.D.A.Y v2.8.7 treats Gemini and OpenAI as separate providers.
+F.R.I.D.A.Y v2.8.10 treats Gemini and OpenAI as separate providers.
 
 | Provider | Configuration | Typical Use |
 |---|---|---|
@@ -624,7 +624,7 @@ README.md
 
 ## Release Notes
 
-### v2.8.7 — Clean Security Map Start
+### v2.8.10 — Clean Security Map Start
 
 - Strengthened the F.R.I.D.A.Y command-center interface.
 - Updated Security Map behavior so the MAP button opens a clean world map first.

@@ -3196,7 +3196,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(_fl("|", C.BORDER_A))
         lay.addWidget(_fl("PRIVATE BUILD", C.TEXT_MED))
         lay.addStretch()
-        lay.addWidget(_fl("v2.8.7", C.TEXT_DIM))
+        lay.addWidget(_fl("v2.8.10", C.TEXT_DIM))
         lay.addWidget(_fl("⌁", C.PRI))
         lay.addWidget(_fl("ONLINE", C.GREEN, QFont.Weight.Black))
         return w
@@ -6035,7 +6035,7 @@ def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
     p.restore()
     return loaded
 
-# === MEDPOV FRIDAY v2.8.7 CLEAN MAP START PATCH ===
+# === MEDPOV FRIDAY v2.8.10 CLEAN MAP START PATCH ===
 # The map opens as a clean world map. Threat/live layers are drawn only after explicit commands.
 def _mpv87_open_security_map_quick_clean(self):
     try:
@@ -6054,7 +6054,7 @@ except Exception as _mpv87_clean_map_patch_error:
         print("[FRIDAY UI] clean map start patch install error:", _mpv87_clean_map_patch_error)
     except Exception:
         pass
-# === /MEDPOV FRIDAY v2.8.7 CLEAN MAP START PATCH ===
+# === /MEDPOV FRIDAY v2.8.10 CLEAN MAP START PATCH ===
 
 
 
