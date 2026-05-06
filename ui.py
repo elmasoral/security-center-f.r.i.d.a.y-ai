@@ -5652,17 +5652,52 @@ def _mpv81_trace_endpoint(trace: dict, key: str, fallback: dict | None = None) -
 
 def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPainterPath | None:
     target = _mpv81_default_target(self)
+
+    try:
+        anchor_lng = float(target.get("lng", 0.0))
+    except Exception:
+        anchor_lng = 0.0
+
+    curve_points = trace.get("curve_points") if isinstance(trace, dict) else None
+
+    if isinstance(curve_points, list) and len(curve_points) >= 2:
+        projected = []
+        last_lng = anchor_lng
+
+        for raw in curve_points:
+            try:
+                if isinstance(raw, dict):
+                    lat = float(raw.get("lat"))
+                    lng = float(raw.get("lng"))
+                else:
+                    lat = float(raw[0])
+                    lng = float(raw[1])
+            except Exception:
+                continue
+
+            lng = _mpv81_adjust_lng_to_anchor(lng, last_lng)
+            last_lng = lng
+            projected.append(_mpv81_project_continuous(self, lat, lng, rect))
+
+        if len(projected) >= 2 and any(_mp_map_on_screen(pt, rect, 260.0) for pt in projected):
+            path = QPainterPath()
+            path.moveTo(projected[0])
+
+            if len(projected) == 2:
+                path.lineTo(projected[1])
+                return path
+
+            for i in range(1, len(projected) - 1):
+                cur = projected[i]
+                nxt = projected[i + 1]
+                mid = QPointF((cur.x() + nxt.x()) / 2.0, (cur.y() + nxt.y()) / 2.0)
+                path.quadTo(cur, mid)
+
+            path.lineTo(projected[-1])
+            return path
+
     src = _mpv81_trace_endpoint(trace, "from")
     dst = _mpv81_trace_endpoint(trace, "to", target)
-
-    if (not src or not dst) and isinstance(trace.get("curve_points"), list) and len(trace.get("curve_points") or []) >= 2:
-        pts = trace.get("curve_points") or []
-        try:
-            src = {"lat": float(pts[0][0]), "lng": float(pts[0][1])}
-            dst = {"lat": float(pts[-1][0]), "lng": float(pts[-1][1])}
-        except Exception:
-            src = src or None
-            dst = dst or None
 
     if not src or not dst:
         return None
@@ -5678,19 +5713,20 @@ def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPaint
     p1 = _mpv81_project_continuous(self, src_lat, src_lng, rect)
     p2 = _mpv81_project_continuous(self, dst_lat, dst_lng, rect)
 
-    if not (_mp_map_on_screen(p1, rect, 180.0) or _mp_map_on_screen(p2, rect, 180.0)):
+    if not (_mp_map_on_screen(p1, rect, 260.0) or _mp_map_on_screen(p2, rect, 260.0)):
         return None
 
     dx = p2.x() - p1.x()
     dy = p2.y() - p1.y()
     distance = math.hypot(dx, dy)
+
     if distance < 10.0:
         return None
 
-    if abs(dx) > rect.width() * 1.35:
+    if abs(dx) > rect.width() * 1.55:
         return None
 
-    lift = max(34.0, min(170.0, distance * 0.18))
+    lift = max(28.0, min(150.0, distance * 0.16))
     side = -1.0 if p1.y() > p2.y() else 1.0
     mid = QPointF((p1.x() + p2.x()) / 2.0, (p1.y() + p2.y()) / 2.0 - lift * side)
 
@@ -5699,31 +5735,6 @@ def _mpv81_make_trace_path(self, rect: QRectF, trace: dict, kind: str) -> QPaint
     path.quadTo(mid, p2)
     return path
 
-
-def _mpv81_draw_route_pulses(p: QPainter, path: QPainterPath, color: str, tick: int, reverse: bool = False):
-    try:
-        base = (float(tick) * 0.012) % 1.0
-        for i in range(4):
-            t = (base + i * 0.245) % 1.0
-            if reverse:
-                t = 1.0 - t
-            t0 = max(0.0, t - 0.025)
-            t1 = min(1.0, t + 0.025)
-            a = path.pointAtPercent(t0)
-            b = path.pointAtPercent(t1)
-
-            glow = QRadialGradient(b, 18)
-            glow.setColorAt(0, qcol(color, 185))
-            glow.setColorAt(1, qcol(color, 0))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(glow))
-            p.drawEllipse(b, 18, 18)
-
-            pen = QPen(qcol("#fff6df", 235), 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            p.setPen(pen)
-            p.drawLine(a, b)
-    except Exception:
-        pass
 
 
 def _mp_map_draw_trace(self, p: QPainter, rect: QRectF, trace: dict, kind: str):
@@ -5736,25 +5747,36 @@ def _mp_map_draw_trace(self, p: QPainter, rect: QRectF, trace: dict, kind: str):
 
     try:
         style = trace.get("style") if isinstance(trace.get("style"), dict) else {}
-        color = str(style.get("color") or (C.GREEN if kind == "live" else "#ff6b35"))
-        opacity = max(80, min(235, int(255 * float(style.get("opacity", 0.82) or 0.82))))
-        width = max(1.35, float(style.get("weight", 2.0) or 2.0))
-        dash_offset = -float(getattr(self, "_tick", 0) % 36)
 
-        glow_pen = QPen(qcol(color, 52), width + 5.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        p.setPen(glow_pen)
-        p.drawPath(path)
+        if kind == "live":
+            color = str(style.get("color") or C.GREEN)
+            width = 1.35
+            alpha = 210
+            dash_pattern = [5.0, 8.0]
+        else:
+            color = str(style.get("color") or "#ff6b35")
+            width = 1.65
+            alpha = 230
+            dash_pattern = [7.0, 7.0]
 
-        route_pen = QPen(qcol(color, opacity), width, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap)
-        route_pen.setDashPattern([7.0, 7.0])
+        dash_offset = -float(getattr(self, "_tick", 0) % 42)
+
+        route_pen = QPen(
+            qcol(color, alpha),
+            width,
+            Qt.PenStyle.CustomDashLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
+        route_pen.setDashPattern(dash_pattern)
         route_pen.setDashOffset(dash_offset)
+
         p.setPen(route_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(path)
 
-        _mpv81_draw_route_pulses(p, path, color, int(getattr(self, "_tick", 0)), reverse=False)
     finally:
         p.restore()
-
 
 def _mp_map_draw_point(self, p: QPainter, rect: QRectF, item: dict, kind: str, index: int):
     try:
@@ -5810,11 +5832,13 @@ def _mp_map_draw_point(self, p: QPainter, rect: QRectF, item: dict, kind: str, i
 
 def _mp_map_draw_target(self, p: QPainter, rect: QRectF):
     target = _mpv81_default_target(self)
+
     try:
         pt = _mpv81_project_continuous(self, float(target.get("lat")), float(target.get("lng")), rect)
     except Exception:
         return
-    if not _mp_map_on_screen(pt, rect, 120.0):
+
+    if not _mp_map_on_screen(pt, rect, 160.0):
         return
 
     label = str(target.get("url") or target.get("label") or "Protected website")
@@ -5823,25 +5847,32 @@ def _mp_map_draw_target(self, p: QPainter, rect: QRectF):
     p.save()
     p.setClipRect(rect.adjusted(1, 1, -1, -1))
 
-    g = QRadialGradient(pt, 54)
-    g.setColorAt(0.00, qcol(C.PRI, 180))
-    g.setColorAt(0.45, qcol(C.PRI, 52))
+    g = QRadialGradient(pt, 40)
+    g.setColorAt(0.00, qcol(C.PRI, 90))
+    g.setColorAt(0.45, qcol(C.PRI, 32))
     g.setColorAt(1.00, qcol(C.PRI, 0))
+
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QBrush(g))
-    p.drawEllipse(pt, 54 + pulse * 12, 54 + pulse * 12)
+    p.drawEllipse(pt, 40 + pulse * 6.0, 40 + pulse * 6.0)
 
     p.setBrush(QBrush(qcol(C.PRI, 245)))
-    p.drawEllipse(pt, 9.0, 9.0)
-    p.setPen(QPen(qcol("#ffffff", 240), 2.0))
+    p.drawEllipse(pt, 8.0, 8.0)
+
+    p.setPen(QPen(qcol("#ffffff", 235), 1.8))
     p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawEllipse(pt, 15.0, 15.0)
-    p.setPen(QPen(qcol(C.PRI, 150), 1.1))
-    p.drawEllipse(pt, 26.0 + pulse * 7.0, 26.0 + pulse * 7.0)
+    p.drawEllipse(pt, 14.0, 14.0)
+
+    p.setPen(QPen(qcol(C.PRI, 145), 1.1))
+    p.drawEllipse(pt, 25.0 + pulse * 4.0, 25.0 + pulse * 4.0)
 
     p.setFont(QFont("Segoe UI", 8, QFont.Weight.Black))
     p.setPen(qcol("#ffffff", 240))
-    p.drawText(QRectF(pt.x() + 16, pt.y() - 15, 220, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label[:30])
+    p.drawText(
+        QRectF(pt.x() + 15, pt.y() - 15, 230, 30),
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        label[:34],
+    )
 
     p.restore()
 
@@ -5956,20 +5987,22 @@ def _mp_map_draw(self, p: QPainter, w: float, h: float):
     live_on = mode in {"live", "both"} or (mode == "world" and _mpv81_has_layer_data(self, "live"))
 
     if threat_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "threat")[:90]):
+            _mp_map_draw_point(self, p, rect, item, "threat", i)
+
+    if live_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "live")[:110]):
+            _mp_map_draw_point(self, p, rect, item, "live", i)
+
+    if threat_on:
         for tr in _mp_map_extract_traces(self, "threat")[:100]:
             _mp_map_draw_trace(self, p, rect, tr, "threat")
+
     if live_on:
         for tr in _mp_map_extract_traces(self, "live")[:120]:
             _mp_map_draw_trace(self, p, rect, tr, "live")
 
     _mp_map_draw_target(self, p, rect)
-
-    if threat_on:
-        for i, item in enumerate(_mp_map_extract_points(self, "threat")[:90]):
-            _mp_map_draw_point(self, p, rect, item, "threat", i)
-    if live_on:
-        for i, item in enumerate(_mp_map_extract_points(self, "live")[:110]):
-            _mp_map_draw_point(self, p, rect, item, "live", i)
 
     p.restore()
 
