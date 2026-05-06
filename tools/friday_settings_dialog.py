@@ -38,6 +38,7 @@ from .friday_settings_store import (
     normalize_fallback_provider,
     normalize_response_language,
     normalize_ui_language,
+    normalize_map_layer,
     get_friday_camera_enabled,
     api_url_from_base,
     load_settings,
@@ -342,23 +343,26 @@ class FridaySettingsDialog(QDialog):
         form = QFormLayout(w)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self.map_view_mode = QComboBox()
-        self.map_view_mode.addItem("2D map · normal navigation", "2d")
-        self.map_view_mode.addItem("3D globe · spherical command view", "3d")
+        self.map_layer = QComboBox()
+        self.map_layer.addItem("Dark / night map · default", "dark")
+        self.map_layer.addItem("OpenStreetMap street · real map", "street")
+        self.map_layer.addItem("Light map · bright roads", "light")
+        self.map_layer.addItem("Satellite imagery · aerial view", "satellite")
+        self.map_layer.addItem("Voyager map · balanced detail", "voyager")
 
         self.map_max_zoom = QLineEdit("18")
-        self.map_max_zoom.setToolTip("OpenStreetMap street tile zoom limit. Recommended: 18")
+        self.map_max_zoom.setToolTip("Street/satellite tile zoom limit. Recommended: 18")
 
         info = QLabel(
-            "Global / normal map uses OpenStreetMap street tiles so FRIDAY can zoom down to city and street level. "
-            "Threat and live Security Center layers keep the dark security dashboard map. "
-            "Switching to 3D renders the same map intelligence on a globe-style HUD."
+            "The old pseudo-3D globe option has been removed. Global, threat and live maps now use selectable tile layers. "
+            "Dark/night is the default for the MEDPOV HUD. Street, light, satellite and voyager layers can be changed here without restarting FRIDAY. "
+            "FRIDAY can also read the current map center when you ask about this region or visible area."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
 
-        form.addRow("Security Map View", self.map_view_mode)
-        form.addRow("Max city zoom", self.map_max_zoom)
+        form.addRow("Map layer", self.map_layer)
+        form.addRow("Max zoom", self.map_max_zoom)
         form.addRow("", info)
         return w
 
@@ -417,12 +421,10 @@ class FridaySettingsDialog(QDialog):
         if voice_idx >= 0:
             self.openai_voice.setCurrentIndex(voice_idx)
         map_settings = s.get("map", {}) if isinstance(s.get("map", {}), dict) else {}
-        map_mode = str(map_settings.get("view_mode") or "2d").lower().strip()
-        if map_mode not in {"2d", "3d"}:
-            map_mode = "2d"
-        map_idx = self.map_view_mode.findData(map_mode)
+        map_layer = normalize_map_layer(map_settings.get("layer") or map_settings.get("provider") or map_settings.get("theme"))
+        map_idx = self.map_layer.findData(map_layer)
         if map_idx >= 0:
-            self.map_view_mode.setCurrentIndex(map_idx)
+            self.map_layer.setCurrentIndex(map_idx)
         self.map_max_zoom.setText(str(map_settings.get("max_zoom") or 18))
         self.camera_enabled.setChecked(bool(s.get("privacy", {}).get("camera_enabled", get_friday_camera_enabled())))
 
@@ -455,7 +457,11 @@ class FridaySettingsDialog(QDialog):
                 "tts_model": self.openai_tts_model.text().strip() or DEFAULT_OPENAI_TTS_MODEL,
                 "voice": str(self.openai_voice.currentData() or DEFAULT_OPENAI_VOICE),
             },
-            "map": {"view_mode": str(self.map_view_mode.currentData() or "2d"), "max_zoom": max(5, min(19, int((self.map_max_zoom.text().strip() or "18"))))},
+            "map": {
+                "view_mode": "2d",
+                "layer": normalize_map_layer(self.map_layer.currentData()),
+                "max_zoom": max(5, min(19, int((self.map_max_zoom.text().strip() or "18")))),
+            },
             "privacy": {"camera_enabled": bool(self.camera_enabled.isChecked())},
         }
 

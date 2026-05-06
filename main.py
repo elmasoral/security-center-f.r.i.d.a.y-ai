@@ -634,6 +634,22 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "current_map_context",
+        "description": (
+            "Returns the current FRIDAY Security Map HUD context: whether the map is open, center latitude/longitude, visible bounding box, zoom level, selected layer, focus label, and reverse-geocoded place when available. "
+            "Use this whenever the user refers to the current map/visible area with phrases like bu bölge, burası, haritadaki yer, this region, visible map area, or asks history/travel/location questions about what is currently shown on the map. "
+            "Do not use security_map for these informational questions unless the user asks to open, close, zoom, or show threat/live layers."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "question": {"type": "STRING", "description": "The user's original question about the current map area"},
+                "reverse_geocode": {"type": "BOOLEAN", "description": "Whether to reverse-geocode the map center. Default true"}
+            },
+            "required": []
+        }
+    },
+    {
         "name": "friday_camera_mode",
         "description": (
             "Opens or closes the FRIDAY camera vision HUD. "
@@ -904,6 +920,7 @@ class FridayLive:
             "Speak naturally, smoothly, and briefly like a premium desktop assistant. Avoid long lists unless the user asks.",
             "Use tools for desktop actions, camera/screen analysis, files, web, reminders, and Security Center.",
             "For map commands such as harita aç, Londra aç, latest threats on map, son global aktiviteler, live connections, or both layers, call security_map instead of answering verbally. Plain map-open commands must open a clean world map first; threat/live layers are drawn only when explicitly requested. The map HUD is a local visual mode, similar to camera mode.",
+            "When the Security Map HUD is open and the user asks about bu bölge, burası, haritadaki yer, visible map area, this region, local history, travel, airports, routes or general information about what is currently shown on the map, call current_map_context first and use its returned place/coordinates as context. Do not call security_map unless changing the map.",
             "FRIDAY runtime commands are NOT computer settings. If the user says standby, stand by, bekleme moduna geç, bekleme modunu aktif et, dinlemeyi durdur, or sleep mode, do not call computer_settings; switch to standby/listening state only.",
             "You do NOT have live visual access by default. If the user asks anything like 'do you see me', 'what am I holding', 'look at the camera', 'kameraya bak', 'beni görüyor musun', or any real-world visual question, you MUST call screen_process with angle='camera' before answering.",
             "Audio/hearing checks are NOT visual requests. For phrases like 'sesim geliyor mu', 'beni duyuyor musun', 'sesin geliyor mu', 'can you hear me', or 'is my voice clear', answer from the live audio connection only. Do NOT open the camera and do NOT call screen_process.",
@@ -1791,9 +1808,22 @@ class FridayLive:
                 self.ui.set_state("THINKING")
                 self.ui.write_log("SYS: OpenAI provider command routing...")
                 from providers.openai_provider import route_command
-                result = route_command(raw, TOOL_DECLARATIONS, system_prompt=(
+                route_text = raw
+                route_tools = TOOL_DECLARATIONS
+                if _friday_looks_like_map_context_question(raw):
+                    map_ctx = _friday_current_map_context(self.ui, {"question": raw, "reverse_geocode": True})
+                    if '"open": true' in map_ctx.lower():
+                        route_text = (
+                            raw
+                            + "\n\n[CURRENT FRIDAY MAP CONTEXT]\n"
+                            + map_ctx
+                            + "\n\nUse this map context as the visible location and answer the user's question naturally. Do not output raw JSON."
+                        )
+                        route_tools = [t for t in TOOL_DECLARATIONS if t.get("name") != "current_map_context"]
+                result = route_command(route_text, route_tools, system_prompt=(
                     "You are F.R.I.D.A.Y, MEDPOV's private desktop AI command center. "
                     "Use the declared tools for desktop actions, files, camera, reminders, web, and Security Center. "
+                    "For questions about the current map area such as bu bölge, burası, haritadaki yer, visible map area, this region, travel/history/location about the visible map, call current_map_context first unless CURRENT FRIDAY MAP CONTEXT is already attached to the user message. "
                     "Keep responses concise. " + FRIDAY_RESPONSE_LANGUAGE_INSTRUCTION
                 ))
                 if result.error:
@@ -2520,6 +2550,10 @@ class FridayLive:
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
 
+            elif name == "current_map_context":
+                r = await loop.run_in_executor(None, lambda: _friday_current_map_context(self.ui, args))
+                result = r or "Map context is not available."
+
             elif name == "security_map":
                 r = await loop.run_in_executor(None, lambda: security_center_action(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Security Center map command completed."
@@ -3046,6 +3080,84 @@ class FridayLive:
             self.ui.set_state("THINKING")
             print("[FRIDAY] 🔄 Reconnecting in 2s...")
             await asyncio.sleep(2)
+
+
+# === MEDPOV FRIDAY v2.8.9 CURRENT MAP CONTEXT TOOL ===
+def _friday_current_map_context(ui, parameters=None) -> str:
+    """Return current Security Map HUD context for AI location/history/travel answers."""
+    params = parameters if isinstance(parameters, dict) else {}
+    context = {"open": False, "message": "Security Map HUD is not open."}
+    try:
+        if hasattr(ui, "get_current_map_context"):
+            context = ui.get_current_map_context()
+        else:
+            win = getattr(ui, "_win", None)
+            if win and hasattr(win, "get_current_map_context"):
+                context = win.get_current_map_context()
+    except Exception as exc:
+        context = {"open": False, "error": str(exc)}
+
+    if not isinstance(context, dict):
+        context = {"open": False, "message": str(context)}
+
+    question = str(params.get("question") or params.get("text") or "").strip()
+    if question:
+        context["user_question"] = question
+
+    reverse_enabled = params.get("reverse_geocode", True)
+    if str(reverse_enabled).strip().lower() not in {"0", "false", "no", "off", "hayir", "hayır"}:
+        center = context.get("center") if isinstance(context.get("center"), dict) else {}
+        lat = center.get("lat")
+        lng = center.get("lng")
+        if lat is not None and lng is not None:
+            reverse = _friday_reverse_geocode(float(lat), float(lng))
+            if reverse:
+                context["reverse_geocode"] = reverse
+
+    return json.dumps(context, ensure_ascii=False, indent=2)
+
+
+def _friday_reverse_geocode(lat: float, lng: float) -> dict:
+    try:
+        from urllib.parse import urlencode
+        from urllib.request import Request, urlopen
+        query = urlencode({
+            "format": "jsonv2",
+            "lat": f"{lat:.7f}",
+            "lon": f"{lng:.7f}",
+            "zoom": 12,
+            "addressdetails": 1,
+            "accept-language": "tr,en",
+        })
+        req = Request(
+            "https://nominatim.openstreetmap.org/reverse?" + query,
+            headers={
+                "User-Agent": "MEDPOV-FRIDAY-Command-Center/2.8.9 (map context; https://medpov.com/)",
+                "Accept": "application/json",
+            },
+        )
+        with urlopen(req, timeout=7) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw or "{}")
+        if not isinstance(data, dict):
+            return {}
+        address = data.get("address") if isinstance(data.get("address"), dict) else {}
+        compact = {
+            "display_name": str(data.get("display_name") or ""),
+            "name": str(data.get("name") or address.get("city") or address.get("town") or address.get("village") or address.get("county") or ""),
+            "city": str(address.get("city") or address.get("town") or address.get("village") or address.get("municipality") or ""),
+            "county": str(address.get("county") or ""),
+            "state": str(address.get("state") or ""),
+            "region": str(address.get("region") or ""),
+            "country": str(address.get("country") or ""),
+            "country_code": str(address.get("country_code") or ""),
+        }
+        return {k: v for k, v in compact.items() if v}
+    except Exception as exc:
+        return {"error": str(exc)[:180]}
+
+# === /MEDPOV FRIDAY v2.8.9 CURRENT MAP CONTEXT TOOL ===
+
 
 def main():
     ui = FridayUI("face.png")

@@ -33,6 +33,7 @@
   },
   "map": {
     "view_mode": "2d",
-    "max_zoom": 18
+    "max_zoom": 18,
+    "layer": "dark"
   }
 }

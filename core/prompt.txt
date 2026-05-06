@@ -92,3 +92,9 @@ SECURITY CENTER GLOBAL MAP MODE:
 - If the user asks “canlı bağlantıları göster”, use action map_live.
 - If the user asks “tehditleri ve canlı bağlantıları birlikte göster”, use action map_both.
 - The map endpoint returns the same target, points, traces and popup contract used by the Security Center dashboard map. Use the visual HUD first, then summarize counts briefly.
+
+CURRENT MAP CONTEXT:
+- If the Security Map HUD is open and the user says “bu bölge”, “burası”, “haritadaki yer”, “visible map area”, “this region”, asks travel/history/location questions about what is currently on the map, or says “haritada görünen yer hakkında bilgi ver”, call `current_map_context` first.
+- Use the returned center coordinates, bounding box, layer and reverse-geocoded place as the location context. Then answer normally in the user's language. Do not call `security_map` unless the user wants to open, close, zoom, or change threat/live layers.
+- For travel questions about the visible map area, answer from general knowledge and clearly mention when live ticket/price data would require a web search.
+

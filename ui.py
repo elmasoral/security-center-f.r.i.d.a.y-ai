@@ -6704,7 +6704,7 @@ def _mpv88_hud_wheel_event(self, event):
                     _mp_map_norm_lng(float(center_lng) + (before_geo[1] - after_geo[1])),
                 )
 
-            provider_label = "OpenStreetMap street zoom" if _mpv88_tile_provider(self) == _MPV88_OSM_PROVIDER else "Security map zoom"
+            provider_label = _MPV89_PROVIDER_LABELS.get(_mpv89_tile_provider(self), "Map layer") if "_MPV89_PROVIDER_LABELS" in globals() else "Map layer"
             self._security_map_notice = f"{provider_label} active · z{_mp_map_tile_zoom(self)} · drag to move."
             self.update()
             event.accept()
@@ -6748,7 +6748,7 @@ def _mpv88_focus_security_map(self, place: str):
     # Country focus stays wider; city focus opens close enough to continue into street level with wheel.
     self._security_map_zoom = 4.2 if str(label).lower() in {"türkiye", "turkiye", "turkey"} else 7.6
     self._security_map_focus_label = label
-    self._security_map_notice = f"Focused on {label} · OpenStreetMap street zoom ready."
+    self._security_map_notice = f"Focused on {label} · {_MPV89_PROVIDER_LABELS.get(_mpv89_tile_provider(self), 'Map layer')} ready." if "_MPV89_PROVIDER_LABELS" in globals() else f"Focused on {label}."
     self.update()
     return True
 
@@ -6764,7 +6764,7 @@ def _mpv88_start_security_map(self, mode="world", map_data=None, focus=""):
     self.state = "MAP"
     self._security_map_active_mode = (mode or "world").lower().strip()
     self._security_map_data = map_data if isinstance(map_data, dict) else {}
-    self._security_map_notice = "OpenStreetMap normal map ready." if _mpv88_is_world_mode(self) else "Security Center map intelligence loaded."
+    self._security_map_notice = f"{_MPV89_PROVIDER_LABELS.get(_mpv89_tile_provider(self), 'Map layer')} ready." if _mpv88_is_world_mode(self) else "Security Center map intelligence loaded."
 
     place = _mp_map_find_place(focus)
     if place:
@@ -6817,8 +6817,450 @@ try:
     HudCanvas.start_security_map_mode = _mpv88_start_security_map
 except Exception as _mpv88_map_patch_error:
     try:
-        print("[FRIDAY UI] OSM / 3D map patch install error:", _mpv88_map_patch_error)
+        print("[FRIDAY UI] OSM legacy map patch install error:", _mpv88_map_patch_error)
     except Exception:
         pass
 
 # === /MEDPOV FRIDAY v2.8.8 OSM + 2D/3D MAP PATCH ===
+
+# === MEDPOV FRIDAY v2.8.9 MAP LAYERS + CONTEXT PATCH ===
+# Removes the old pseudo-3D globe renderer from Settings/runtime and replaces it
+# with selectable 2D tile layers: dark(default), street, light, satellite, voyager.
+
+_MPV89_TILE_PENDING = set()
+_MPV89_TILE_LOCK = threading.Lock()
+_MPV89_PROVIDER_LABELS = {
+    "dark": "Dark night map",
+    "street": "OpenStreetMap street map",
+    "light": "Light road map",
+    "satellite": "Satellite imagery",
+    "voyager": "Voyager detail map",
+}
+
+
+def _mpv89_read_map_settings() -> dict:
+    try:
+        path = CONFIG_DIR / "friday_settings.json"
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8") or "{}")
+            if isinstance(data, dict):
+                raw = data.get("map") or data.get("security_map") or {}
+                return raw if isinstance(raw, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _mpv88_map_view_mode(self=None) -> str:
+    # Stable renderer only. Legacy config values such as 3d/globe are ignored.
+    return "2d"
+
+
+def _mpv89_normalize_layer(value) -> str:
+    raw = str(value or "dark").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "night": "dark", "koyu": "dark", "gece": "dark", "default": "dark",
+        "osm": "street", "openstreetmap": "street", "open_street_map": "street",
+        "normal": "street", "real": "street", "gercek": "street", "gerçek": "street", "standard": "street",
+        "bright": "light", "light_mode": "light",
+        "sat": "satellite", "satalate": "satellite", "satelite": "satellite", "uydu": "satellite", "imagery": "satellite",
+        "hybrid": "satellite", "voyager_map": "voyager",
+    }
+    raw = aliases.get(raw, raw)
+    return raw if raw in {"dark", "street", "light", "satellite", "voyager"} else "dark"
+
+
+def _mpv89_tile_provider(self=None) -> str:
+    settings = _mpv89_read_map_settings()
+    return _mpv89_normalize_layer(settings.get("layer") or settings.get("provider") or settings.get("theme"))
+
+
+# Override the previous world/threat provider switch. The selected layer is now
+# used for clean global map and for threat/live overlays.
+def _mpv88_tile_provider(self) -> str:
+    return _mpv89_tile_provider(self)
+
+
+def _mpv88_max_tile_zoom(self) -> int:
+    try:
+        value = int((_mpv89_read_map_settings().get("max_zoom") or 18))
+    except Exception:
+        value = 18
+    return max(5, min(19, value))
+
+
+def _mpv89_tile_cache_dir(provider: str) -> Path:
+    return BASE_DIR / "cache" / "map_tiles" / str(provider or "dark")
+
+
+def _mpv88_tile_cache_dir(provider: str) -> Path:
+    return _mpv89_tile_cache_dir(provider)
+
+
+def _mpv88_tile_path(provider: str, z: int, x: int, y: int) -> Path:
+    return _mpv89_tile_cache_dir(provider) / str(int(z)) / str(int(x)) / f"{int(y)}.png"
+
+
+def _mpv89_tile_url(provider: str, z: int, x: int, y: int) -> str:
+    provider = _mpv89_normalize_layer(provider)
+    if provider == "street":
+        return f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    if provider == "light":
+        sub = _MP_TILE_SUBDOMAINS[(int(x) + int(y)) % len(_MP_TILE_SUBDOMAINS)]
+        return f"https://{sub}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+    if provider == "voyager":
+        sub = _MP_TILE_SUBDOMAINS[(int(x) + int(y)) % len(_MP_TILE_SUBDOMAINS)]
+        return f"https://{sub}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+    if provider == "satellite":
+        return f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    sub = _MP_TILE_SUBDOMAINS[(int(x) + int(y)) % len(_MP_TILE_SUBDOMAINS)]
+    return f"https://{sub}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+
+
+def _mpv88_tile_url(provider: str, z: int, x: int, y: int) -> str:
+    return _mpv89_tile_url(provider, z, x, y)
+
+
+def _mpv88_schedule_tile_download(widget, provider: str, z: int, x: int, y: int, path: Path) -> None:
+    provider = _mpv89_normalize_layer(provider)
+    key = (provider, int(z), int(x), int(y))
+    with _MPV89_TILE_LOCK:
+        if key in _MPV89_TILE_PENDING:
+            return
+        _MPV89_TILE_PENDING.add(key)
+
+    def _worker():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            from urllib.request import Request, urlopen
+            req = Request(
+                _mpv89_tile_url(provider, z, x, y),
+                headers={
+                    "User-Agent": "MEDPOV-FRIDAY-Command-Center/2.8.9 (map layer cache; contact: https://medpov.com/)",
+                    "Accept": "image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5",
+                },
+            )
+            with urlopen(req, timeout=10) as resp:
+                data = resp.read()
+            if data:
+                tmp.write_bytes(data)
+                tmp.replace(path)
+        except Exception:
+            pass
+        finally:
+            with _MPV89_TILE_LOCK:
+                _MPV89_TILE_PENDING.discard(key)
+            try:
+                widget.update()
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _mpv89_layer_base_color(provider: str) -> str:
+    provider = _mpv89_normalize_layer(provider)
+    if provider == "dark":
+        return "#050a12"
+    if provider == "street":
+        return "#d8d3c6"
+    if provider == "light":
+        return "#eef2ef"
+    if provider == "satellite":
+        return "#081018"
+    if provider == "voyager":
+        return "#dce8df"
+    return "#050a12"
+
+
+def _mpv89_layer_is_dark(provider: str) -> bool:
+    return _mpv89_normalize_layer(provider) in {"dark", "satellite"}
+
+
+def _mp_map_tile_zoom(self) -> int:
+    _mp_map_init(self)
+    visual = float(getattr(self, "_security_map_zoom", 1.0) or 1.0)
+    if visual < 1.12:
+        z = 3
+    elif visual < 1.40:
+        z = 4
+    elif visual < 1.90:
+        z = 5
+    elif visual < 2.55:
+        z = 6
+    elif visual < 3.35:
+        z = 7
+    elif visual < 4.35:
+        z = 8
+    elif visual < 5.60:
+        z = 10
+    elif visual < 7.20:
+        z = 12
+    elif visual < 9.30:
+        z = 14
+    elif visual < 12.20:
+        z = 16
+    else:
+        z = 18
+    return min(_mpv88_max_tile_zoom(self), z)
+
+
+def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
+    """Draw the selected 2D map layer and cache tiles locally."""
+    _mp_map_init(self)
+    provider = _mpv89_tile_provider(self)
+    z = _mp_map_tile_zoom(self)
+    n = 2 ** z
+    world_size = _MP_TILE_SIZE * n
+    center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+
+    left_world = center_px.x() - rect.width() / 2.0
+    top_world = center_px.y() - rect.height() / 2.0
+    right_world = center_px.x() + rect.width() / 2.0
+    bottom_world = center_px.y() + rect.height() / 2.0
+    start_tx = int(math.floor(left_world / _MP_TILE_SIZE)) - 1
+    end_tx = int(math.floor(right_world / _MP_TILE_SIZE)) + 1
+    start_ty = max(0, int(math.floor(top_world / _MP_TILE_SIZE)) - 1)
+    end_ty = min(n - 1, int(math.floor(bottom_world / _MP_TILE_SIZE)) + 1)
+
+    loaded = 0
+    p.save()
+    p.setClipRect(rect)
+    base_color = _mpv89_layer_base_color(provider)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(qcol(base_color, 255)))
+    p.drawRect(rect)
+
+    for ty in range(start_ty, end_ty + 1):
+        for tx_raw in range(start_tx, end_tx + 1):
+            tx = tx_raw % n
+            path = _mpv88_tile_path(provider, z, tx, ty)
+            sx = rect.center().x() + (tx_raw * _MP_TILE_SIZE - center_px.x())
+            sy = rect.center().y() + (ty * _MP_TILE_SIZE - center_px.y())
+            tile_rect = QRectF(sx, sy, _MP_TILE_SIZE + 1, _MP_TILE_SIZE + 1)
+            if path.exists():
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    p.drawPixmap(tile_rect, pix, QRectF(0, 0, pix.width(), pix.height()))
+                    loaded += 1
+                    continue
+            p.setPen(QPen(qcol(C.PRI, 16 if _mpv89_layer_is_dark(provider) else 10), 1))
+            p.setBrush(QBrush(qcol(base_color, 230)))
+            p.drawRect(tile_rect)
+            _mpv88_schedule_tile_download(self, provider, z, tx, ty, path)
+
+    # Fill top/bottom outside valid Mercator world so panning never exposes a white gap.
+    world_top_screen_y = rect.center().y() - center_px.y()
+    if world_top_screen_y > rect.top():
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(base_color, 255)))
+        p.drawRect(QRectF(rect.left(), rect.top(), rect.width(), min(rect.bottom(), world_top_screen_y) - rect.top()))
+    world_bottom_screen_y = rect.center().y() + world_size - center_px.y()
+    if world_bottom_screen_y < rect.bottom():
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(base_color, 255)))
+        p.drawRect(QRectF(rect.left(), max(rect.top(), world_bottom_screen_y), rect.width(), rect.bottom() - max(rect.top(), world_bottom_screen_y)))
+
+    # HUD tint: dark/satellite stay cinematic; street/light remain readable but no longer blinding.
+    shade = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    if provider == "dark":
+        shade.setColorAt(0.00, qcol("#000712", 54))
+        shade.setColorAt(0.45, qcol("#001522", 24))
+        shade.setColorAt(1.00, qcol("#050006", 74))
+    elif provider == "satellite":
+        shade.setColorAt(0.00, qcol("#000814", 72))
+        shade.setColorAt(0.50, qcol("#001724", 42))
+        shade.setColorAt(1.00, qcol("#050006", 78))
+    else:
+        shade.setColorAt(0.00, qcol("#00131a", 72))
+        shade.setColorAt(0.50, qcol("#00131a", 34))
+        shade.setColorAt(1.00, qcol("#050006", 58))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(shade))
+    p.drawRect(rect)
+
+    if loaded == 0:
+        if provider in {"dark", "satellite"}:
+            try:
+                _mp_map_draw_land(self, p, rect)
+            except Exception:
+                pass
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.setPen(qcol(C.TEXT_DIM if _mpv89_layer_is_dark(provider) else "#1e3440", 190))
+        p.drawText(
+            QRectF(rect.left() + 24, rect.bottom() - 28, rect.width() - 48, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            f"{_MPV89_PROVIDER_LABELS.get(provider, 'Map layer')} tiles are loading and will be cached locally.",
+        )
+
+    p.restore()
+    return loaded
+
+
+def _mp_map_draw(self, p: QPainter, w: float, h: float):
+    _mp_map_init(self)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+    bg = QRadialGradient(QPointF(w * .52, h * .48), max(w, h) * .76)
+    bg.setColorAt(0, qcol("#071b24", 255))
+    bg.setColorAt(.50, qcol("#06101a", 255))
+    bg.setColorAt(1, qcol("#01050b", 255))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(bg))
+    p.drawRect(0, 0, int(w), int(h))
+
+    rect = _mp_map_widget_rect(self)
+    p.setPen(QPen(qcol(C.PRI, 58), 1.0))
+    p.setBrush(QBrush(qcol("#020812", 92)))
+    p.drawRoundedRect(rect, 12, 12)
+
+    _mp_map_draw_real_tiles(self, p, rect)
+
+    p.save()
+    p.setClipRect(rect.adjusted(1, 1, -1, -1))
+    provider = _mpv89_tile_provider(self)
+    dark = _mpv89_layer_is_dark(provider)
+
+    for gx, gy, col, alpha, scale in [
+        (0.24, 0.44, C.ACC, 20 if dark else 9, 0.22),
+        (0.54, 0.43, C.PRI, 24 if dark else 11, 0.25),
+        (0.78, 0.46, C.RED, 18 if dark else 8, 0.24),
+        (0.58, 0.74, C.GREEN, 16 if dark else 7, 0.20),
+    ]:
+        center = QPointF(rect.left() + rect.width() * gx, rect.top() + rect.height() * gy)
+        g = QRadialGradient(center, rect.width() * scale)
+        g.setColorAt(0, qcol(col, alpha))
+        g.setColorAt(1, qcol(col, 0))
+        p.setBrush(QBrush(g))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(center, rect.width() * scale, rect.width() * scale)
+
+    # Dark and satellite need labels from our lightweight vector fallback;
+    # street/light/voyager already include dense labels from tile provider.
+    if provider in {"dark", "satellite"}:
+        _mp_map_draw_city_labels(self, p, rect)
+
+    mode = str(getattr(self, "_security_map_active_mode", "world") or "world").lower()
+    threat_on = mode in {"threat", "both", "map", "map-data"}
+    live_on = mode in {"live", "both"}
+
+    if threat_on:
+        for tr in _mp_map_extract_traces(self, "threat")[:100]:
+            _mp_map_draw_trace(self, p, rect, tr, "threat")
+    if live_on:
+        for tr in _mp_map_extract_traces(self, "live")[:120]:
+            _mp_map_draw_trace(self, p, rect, tr, "live")
+
+    clean_world = (
+        mode in {"world", "blank", "empty", "global", "global-map"}
+        and not (_mp_map_extract_points(self, "threat") or _mp_map_extract_traces(self, "threat"))
+        and not (_mp_map_extract_points(self, "live") or _mp_map_extract_traces(self, "live"))
+        and not (isinstance(getattr(self, "_security_map_data", {}), dict) and getattr(self, "_security_map_data", {}).get("target"))
+    )
+    if not clean_world:
+        _mp_map_draw_target(self, p, rect)
+
+    if threat_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "threat")[:90]):
+            _mp_map_draw_point(self, p, rect, item, "threat", i)
+    if live_on:
+        for i, item in enumerate(_mp_map_extract_points(self, "live")[:110]):
+            _mp_map_draw_point(self, p, rect, item, "live", i)
+
+    if float(getattr(self, "_security_map_zoom", 1.0) or 1.0) > 3.0:
+        cx, cy = rect.center().x(), rect.center().y()
+        p.setPen(QPen(qcol(C.PRI, 92), 1.0))
+        p.drawLine(QPointF(cx - 18, cy), QPointF(cx + 18, cy))
+        p.drawLine(QPointF(cx, cy - 18), QPointF(cx, cy + 18))
+        p.setPen(QPen(qcol(C.PRI, 58), 1.0))
+        p.drawEllipse(QPointF(cx, cy), 26, 26)
+    p.restore()
+
+    try:
+        _mpv81_draw_red_map_frame(self, p, rect)
+    except Exception:
+        pass
+    _mp_map_draw_hud_panel(self, p, rect, w, h)
+    try:
+        _mpv81_draw_protected_site_badge(self, p, rect)
+    except Exception:
+        pass
+    try:
+        self._draw_mini_friday_core(p, w, h)
+    except Exception:
+        pass
+
+
+def _mpv89_get_current_map_context(self) -> dict:
+    _mp_map_init(self)
+    context = {
+        "open": bool(getattr(self, "security_map_mode", False)),
+        "mode": str(getattr(self, "_security_map_active_mode", "world") or "world"),
+        "focus_label": str(getattr(self, "_security_map_focus_label", "World") or "World"),
+        "notice": str(getattr(self, "_security_map_notice", "") or ""),
+        "layer": _mpv89_tile_provider(self),
+        "layer_label": _MPV89_PROVIDER_LABELS.get(_mpv89_tile_provider(self), "Map layer"),
+        "zoom_visual": round(float(getattr(self, "_security_map_zoom", 1.0) or 1.0), 3),
+        "tile_zoom": int(_mp_map_tile_zoom(self)),
+    }
+    try:
+        lat, lng = getattr(self, "_security_map_center", (18.0, 28.0))
+        context["center"] = {"lat": round(float(lat), 6), "lng": round(float(lng), 6)}
+    except Exception:
+        context["center"] = {"lat": 18.0, "lng": 28.0}
+    try:
+        rect = _mp_map_widget_rect(self)
+        corners = {
+            "top_left": _mp_map_screen_to_latlng(self, rect.topLeft(), rect),
+            "top_right": _mp_map_screen_to_latlng(self, rect.topRight(), rect),
+            "bottom_left": _mp_map_screen_to_latlng(self, rect.bottomLeft(), rect),
+            "bottom_right": _mp_map_screen_to_latlng(self, rect.bottomRight(), rect),
+        }
+        context["visible_bbox"] = {
+            key: {"lat": round(float(value[0]), 6), "lng": round(float(value[1]), 6)}
+            for key, value in corners.items() if value
+        }
+    except Exception:
+        context["visible_bbox"] = {}
+    return context
+
+
+def _mpv89_mainwindow_get_current_map_context(self) -> dict:
+    try:
+        hud = getattr(self, "hud", None)
+        if hud and hasattr(hud, "get_current_map_context"):
+            return hud.get_current_map_context()
+    except Exception:
+        pass
+    return {"open": False, "message": "Security Map HUD is not open."}
+
+
+def _mpv89_fridayui_get_current_map_context(self) -> dict:
+    try:
+        win = getattr(self, "_win", None)
+        if win and hasattr(win, "get_current_map_context"):
+            return win.get_current_map_context()
+    except Exception:
+        pass
+    return {"open": False, "message": "Security Map HUD is not open."}
+
+
+try:
+    HudCanvas.get_current_map_context = _mpv89_get_current_map_context
+    MainWindow.get_current_map_context = _mpv89_mainwindow_get_current_map_context
+    FridayUI.get_current_map_context = _mpv89_fridayui_get_current_map_context
+    HudCanvas.paintEvent = _mpv88_hud_paint_event
+    HudCanvas.wheelEvent = _mpv88_hud_wheel_event
+    HudCanvas.mouseDoubleClickEvent = _mpv88_hud_mouse_double_click_event
+    HudCanvas.focus_security_map = _mpv88_focus_security_map
+    HudCanvas.start_security_map_mode = _mpv88_start_security_map
+except Exception as _mpv89_map_patch_error:
+    try:
+        print("[FRIDAY UI] Map layer/context patch install error:", _mpv89_map_patch_error)
+    except Exception:
+        pass
+
+# === /MEDPOV FRIDAY v2.8.9 MAP LAYERS + CONTEXT PATCH ===

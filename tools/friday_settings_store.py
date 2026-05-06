@@ -28,6 +28,7 @@ DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime"
 DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_VOICE = "marin"
 DEFAULT_MAP_VIEW_MODE = "2d"
+DEFAULT_MAP_LAYER = "dark"
 DEFAULT_MAP_MAX_ZOOM = 18
 
 VOICE_OPTIONS: List[Dict[str, str]] = [
@@ -76,6 +77,7 @@ DEFAULTS: Dict[str, Any] = {
     },
     "map": {
         "view_mode": DEFAULT_MAP_VIEW_MODE,
+        "layer": DEFAULT_MAP_LAYER,
         "max_zoom": DEFAULT_MAP_MAX_ZOOM,
     },
     "security_center": {
@@ -210,6 +212,8 @@ def load_settings() -> Dict[str, Any]:
     settings["privacy"]["camera_enabled"] = normalize_camera_enabled(settings["privacy"].get("camera_enabled"))
     settings.setdefault("map", {}).setdefault("view_mode", DEFAULT_MAP_VIEW_MODE)
     settings["map"]["view_mode"] = normalize_map_view_mode(settings["map"].get("view_mode"))
+    settings["map"].setdefault("layer", DEFAULT_MAP_LAYER)
+    settings["map"]["layer"] = normalize_map_layer(settings["map"].get("layer") or settings["map"].get("provider") or settings["map"].get("theme"))
     try:
         settings["map"]["max_zoom"] = max(5, min(19, int(settings["map"].get("max_zoom") or DEFAULT_MAP_MAX_ZOOM)))
     except Exception:
@@ -241,6 +245,9 @@ def save_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     )
     merged.setdefault("map", {})["view_mode"] = normalize_map_view_mode(
         merged.get("map", {}).get("view_mode")
+    )
+    merged["map"]["layer"] = normalize_map_layer(
+        merged.get("map", {}).get("layer") or merged.get("map", {}).get("provider") or merged.get("map", {}).get("theme")
     )
     try:
         merged["map"]["max_zoom"] = max(5, min(19, int(merged.get("map", {}).get("max_zoom") or DEFAULT_MAP_MAX_ZOOM)))
@@ -350,10 +357,43 @@ def normalize_ui_language(value: Any) -> str:
 
 
 def normalize_map_view_mode(value: Any) -> str:
-    raw = str(value or DEFAULT_MAP_VIEW_MODE).strip().lower().replace(" ", "").replace("-", "")
-    if raw in {"3d", "globe", "sphere", "kure", "küre"}:
-        return "3d"
+    # The old pseudo-3D/globe mode was removed. Keep accepting legacy values,
+    # but always normalize the renderer back to the stable 2D tile map.
     return "2d"
+
+
+def normalize_map_layer(value: Any) -> str:
+    raw = str(value or DEFAULT_MAP_LAYER).strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "night": "dark",
+        "dark_mode": "dark",
+        "koyu": "dark",
+        "gece": "dark",
+        "default": "dark",
+        "osm": "street",
+        "openstreetmap": "street",
+        "open_street_map": "street",
+        "normal": "street",
+        "real": "street",
+        "gercek": "street",
+        "gerçek": "street",
+        "map": "street",
+        "standard": "street",
+        "light_mode": "light",
+        "bright": "light",
+        "sat": "satellite",
+        "satalate": "satellite",
+        "satelite": "satellite",
+        "satellite_view": "satellite",
+        "uydu": "satellite",
+        "imagery": "satellite",
+        "hybrid": "satellite",
+        "voyager_map": "voyager",
+    }
+    raw = aliases.get(raw, raw)
+    if raw in {"dark", "street", "light", "satellite", "voyager"}:
+        return raw
+    return DEFAULT_MAP_LAYER
 
 
 def normalize_camera_enabled(value: Any) -> bool:
@@ -393,6 +433,11 @@ def get_friday_ui_language_label() -> str:
 
 def get_friday_map_view_mode() -> str:
     return normalize_map_view_mode(load_settings().get("map", {}).get("view_mode"))
+
+
+def get_friday_map_layer() -> str:
+    map_settings = load_settings().get("map", {})
+    return normalize_map_layer(map_settings.get("layer") or map_settings.get("provider") or map_settings.get("theme"))
 
 
 def get_friday_map_max_zoom() -> int:
