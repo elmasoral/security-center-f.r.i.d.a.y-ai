@@ -489,6 +489,18 @@ git clean -fd
 .\install_friday.bat
 ```
 
+### ⚡ Quick Update (One command)
+
+```powershell
+cd C:\MEDPOV\security-center-f.r.i.d.a.y-ai
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install opencv-python
+```
+
 ---
 
 ## Desktop Shortcut and Icon
