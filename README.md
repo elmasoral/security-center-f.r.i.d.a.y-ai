@@ -4,6 +4,37 @@
 
 Designed by **MEDPOV**.
 
+## Interface Preview
+
+F.R.I.D.A.Y Command Center includes multiple visual modes, Security Center integration panels, live map views, API configuration screens, responsive layouts, and camera-assisted desktop interaction.
+
+<p align="center">
+  <img src="assets/readme/1.png" alt="F.R.I.D.A.Y Command Center Active Mode" width="900">
+</p>
+
+### Visual Modes
+
+<p align="center">
+  <img src="assets/readme/1.png" alt="Green Active Mode" width="31%">
+  <img src="assets/readme/2.png" alt="Orange Listening Mode" width="31%">
+  <img src="assets/readme/3.png" alt="Red Alert Mode" width="31%">
+</p>
+
+### Security Center Integration
+
+<p align="center">
+  <img src="assets/readme/4.png" alt="Security Map View" width="48%">
+  <img src="assets/readme/6.png" alt="Security Center Data View" width="48%">
+</p>
+
+### Settings, Responsive UI and Camera Mode
+
+<p align="center">
+  <img src="assets/readme/5.png" alt="Settings Panel" width="31%">
+  <img src="assets/readme/8.png" alt="Responsive Layout" width="31%">
+  <img src="assets/readme/9.png" alt="Camera Developer Desktop" width="31%">
+</p>
+
 > F.R.I.D.A.Y runs on the user’s own Windows computer. WAMP is **not required**. The recommended installation path is `C:\MEDPOV\security-center-f.r.i.d.a.y-ai`.
 
 F.R.I.D.A.Y is designed to work in parallel with the **MEDPOV Security Center** software. When connected to a Security Center installation, it can help monitor security events, review threat summaries, analyze suspicious IP addresses, and provide voice or text-based operational assistance from the local desktop interface.
