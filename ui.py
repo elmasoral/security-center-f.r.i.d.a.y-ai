@@ -5896,3 +5896,140 @@ except Exception as _mpv81_patch_error:
         pass
 
 # === /MEDPOV FRIDAY UI V6.1 DASHBOARD-STYLE SECURITY MAP FIX ===
+
+# === MEDPOV FRIDAY MAP TOP/BOTTOM SEAM COLOR FIX ===
+# Paste this block at the END of ui.py
+# Fixes the empty-looking top/bottom areas inside the red map frame.
+# Top gap: sea color        #1E1F21
+# Bottom gap: Antarctica    #08100F
+
+_MPV6_MAP_TOP_SEA = "#1E1F21"
+_MPV6_MAP_BOTTOM_ANTARCTICA = "#08100F"
+
+
+def _mp_map_draw_real_tiles(self, p: QPainter, rect: QRectF) -> int:
+    """Draw real dashboard-like dark world tiles with fixed top/bottom seam colors."""
+    _mp_map_init(self)
+
+    z = _mp_map_tile_zoom(self)
+    n = 2 ** z
+    world_size = _MP_TILE_SIZE * n
+
+    center_lat, center_lng = getattr(self, "_security_map_center", (18.0, 28.0))
+    center_px = _mp_map_latlng_to_world_px(float(center_lat), float(center_lng), z)
+
+    left_world = center_px.x() - rect.width() / 2.0
+    top_world = center_px.y() - rect.height() / 2.0
+    right_world = center_px.x() + rect.width() / 2.0
+    bottom_world = center_px.y() + rect.height() / 2.0
+
+    start_tx = int(math.floor(left_world / _MP_TILE_SIZE)) - 1
+    end_tx = int(math.floor(right_world / _MP_TILE_SIZE)) + 1
+    start_ty = max(0, int(math.floor(top_world / _MP_TILE_SIZE)) - 1)
+    end_ty = min(n - 1, int(math.floor(bottom_world / _MP_TILE_SIZE)) + 1)
+
+    loaded = 0
+
+    p.save()
+    p.setClipRect(rect)
+
+    # Base background: top sea color, bottom Antarctica color.
+    # This removes the empty black-looking cut above/below the actual tile world.
+    base = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+    base.setColorAt(0.00, qcol(_MPV6_MAP_TOP_SEA, 255))
+    base.setColorAt(0.58, qcol("#121719", 255))
+    base.setColorAt(0.82, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA, 255))
+    base.setColorAt(1.00, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA, 255))
+
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(base))
+    p.drawRect(rect)
+
+    for ty in range(start_ty, end_ty + 1):
+        for tx_raw in range(start_tx, end_tx + 1):
+            tx = tx_raw % n
+            path = _mp_map_tile_path(z, tx, ty)
+
+            sx = rect.center().x() + (tx_raw * _MP_TILE_SIZE - center_px.x())
+            sy = rect.center().y() + (ty * _MP_TILE_SIZE - center_px.y())
+            tile_rect = QRectF(sx, sy, _MP_TILE_SIZE + 1, _MP_TILE_SIZE + 1)
+
+            if path.exists():
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    p.drawPixmap(tile_rect, pix, QRectF(0, 0, pix.width(), pix.height()))
+                    loaded += 1
+                    continue
+
+            # Placeholder while tile is downloading.
+            # Upper missing tiles use sea tone, lower missing tiles use Antarctica tone.
+            placeholder = _MPV6_MAP_TOP_SEA if tile_rect.center().y() < rect.center().y() else _MPV6_MAP_BOTTOM_ANTARCTICA
+
+            p.setPen(QPen(qcol(C.PRI, 10), 1))
+            p.setBrush(QBrush(qcol(placeholder, 210)))
+            p.drawRect(tile_rect)
+
+            _mp_map_schedule_tile_download(self, z, tx, ty, path)
+
+    # Explicitly paint the areas outside Mercator tile bounds.
+    # North/top area.
+    world_top_screen_y = rect.center().y() - center_px.y()
+    if world_top_screen_y > rect.top():
+        top_bottom = min(rect.bottom(), world_top_screen_y)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(_MPV6_MAP_TOP_SEA, 255)))
+        p.drawRect(QRectF(rect.left(), rect.top(), rect.width(), top_bottom - rect.top()))
+
+        # Soft blend into map tiles.
+        fade = QLinearGradient(
+            QPointF(rect.left(), top_bottom - 2),
+            QPointF(rect.left(), min(rect.bottom(), top_bottom + 42))
+        )
+        fade.setColorAt(0.00, qcol(_MPV6_MAP_TOP_SEA, 230))
+        fade.setColorAt(1.00, qcol(_MPV6_MAP_TOP_SEA, 0))
+        p.setBrush(QBrush(fade))
+        p.drawRect(QRectF(rect.left(), top_bottom - 2, rect.width(), 44))
+
+    # South/bottom area.
+    world_bottom_screen_y = rect.center().y() + world_size - center_px.y()
+    if world_bottom_screen_y < rect.bottom():
+        bottom_top = max(rect.top(), world_bottom_screen_y)
+
+        # Soft blend from map tiles into Antarctica color.
+        fade = QLinearGradient(
+            QPointF(rect.left(), max(rect.top(), bottom_top - 46)),
+            QPointF(rect.left(), bottom_top + 2)
+        )
+        fade.setColorAt(0.00, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA, 0))
+        fade.setColorAt(1.00, qcol(_MPV6_MAP_BOTTOM_ANTARCTICA, 235))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(fade))
+        p.drawRect(QRectF(rect.left(), max(rect.top(), bottom_top - 46), rect.width(), 48))
+
+        p.setBrush(QBrush(qcol(_MPV6_MAP_BOTTOM_ANTARCTICA, 255)))
+        p.drawRect(QRectF(rect.left(), bottom_top, rect.width(), rect.bottom() - bottom_top))
+
+    # Dashboard-style dark atmosphere overlay.
+    shade = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    shade.setColorAt(0.00, qcol("#00050a", 72))
+    shade.setColorAt(0.45, qcol("#00131a", 36))
+    shade.setColorAt(1.00, qcol("#050006", 88))
+
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(shade))
+    p.drawRect(rect)
+
+    # If there is no internet/cache yet, keep the offline vector fallback visible.
+    if loaded == 0:
+        _mp_map_draw_land(self, p, rect)
+
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.setPen(qcol(C.TEXT_DIM, 170))
+        p.drawText(
+            QRectF(rect.left() + 24, rect.bottom() - 28, rect.width() - 48, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "Real dashboard map tiles are loading and will be cached locally."
+        )
+
+    p.restore()
+    return loaded
