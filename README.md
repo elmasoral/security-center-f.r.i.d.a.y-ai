@@ -23,14 +23,14 @@ F.R.I.D.A.Y Command Center includes multiple visual modes, Security Center integ
 ### Security Center Integration
 
 <p align="center">
-  <img src="assets/readme/4.png" alt="Security Map View" width="48%">
+  <img src="assets/readme/5.png" alt="Security Map View" width="48%">
   <img src="assets/readme/6.png" alt="Security Center Data View" width="48%">
 </p>
 
 ### Settings, Responsive UI and Camera Mode
 
 <p align="center">
-  <img src="assets/readme/5.png" alt="Settings Panel" width="31%">
+  <img src="assets/readme/4.png" alt="Settings Panel" width="31%">
   <img src="assets/readme/8.png" alt="Responsive Layout" width="31%">
   <img src="assets/readme/9.png" alt="Camera Developer Desktop" width="31%">
 </p>
