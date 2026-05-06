@@ -249,8 +249,14 @@ def security_center_action(parameters: Optional[Dict[str, Any]] = None, player: 
 
     # Visual map actions. These update the large FRIDAY HUD map when a UI player is available.
     if action == "map_open":
+        # Open the same dashboard-grade map payload used by the web Security Center.
+        # This prevents the FRIDAY map from opening as an empty/static world map.
+        data = c.both_map(threat_range=threat_range, live_range=live_range, include_curve_points=include_curve_points)
+        if isinstance(data, dict) and data.get("ok", True) is not False:
+            _push_map_to_ui(player, data, mode="both", focus=focus)
+            return _format_map(data, "both")
         _push_map_to_ui(player, None, mode="world", focus=focus)
-        return "Security global world map açıldı. Ülke/şehir görünümü hazır; şehir adı söyleyerek zoom yapabilir, son tehditleri veya canlı bağlantıları haritada isteyebilirsin."
+        return "Security global world map açıldı; ancak Security Center map verisi alınamadı: " + str((data or {}).get("message", "unknown error"))
     if action == "map_close":
         _close_map(player)
         return "Security map kapatıldı."
