@@ -272,7 +272,7 @@ class FridaySettingsDialog(QDialog):
         self.sc_endpoint_preview.setReadOnly(True)
         test_btn = QPushButton("Test Connection")
         test_btn.clicked.connect(self._test_security_center)
-        info = QLabel("Example base URL: https://medpov.com/main/security-center or https://example.com/security-center")
+        info = QLabel("Example base URL: https://example.com/ or https://example.com/security-center. If the customer enters only the root domain, FRIDAY automatically uses /security-center/. Custom folders are kept only when written explicitly.")
         info.setWordWrap(True)
         info.setStyleSheet("color:#8fa1b8;")
         form.addRow("Base URL", self.sc_base_url)
@@ -404,7 +404,7 @@ class FridaySettingsDialog(QDialog):
         if response_idx >= 0:
             self.response_language_combo.setCurrentIndex(response_idx)
         sc = s.get("security_center", {})
-        self.sc_base_url.setText(str(sc.get("base_url") or "https://medpov.com/main/security-center"))
+        self.sc_base_url.setText(str(sc.get("base_url") or "https://siteadi.com/security-center"))
         self.sc_api_key.setText(str(sc.get("api_key") or ""))
         self.sc_timeout.setText(str(sc.get("timeout") or 25))
         self._refresh_sc_endpoint_preview()

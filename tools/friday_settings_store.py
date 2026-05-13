@@ -122,12 +122,45 @@ def _deep_merge(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_security_center_base_url(value: str) -> str:
+    """Normalize the customer Security Center base URL.
+
+    FRIDAY must match the web package contract:
+    - A plain customer domain becomes /security-center/.
+    - An already entered /security-center/ or /main/security-center/ path is kept.
+    - A direct /admin/api/remote-access.php endpoint is respected as a direct/root install.
+    - Custom folders are never guessed as /main automatically.
+    """
     raw = str(value or "").strip()
     if not raw:
         raw = DEFAULT_SECURITY_CENTER_BASE_URL
-    raw = raw.rstrip("/")
-    raw = re.sub(r"/admin/api/remote-access\.php$", "", raw, flags=re.I).rstrip("/")
-    return raw
+    if not re.match(r"^https?://", raw, flags=re.I):
+        raw = "https://" + raw
+
+    raw = raw.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    endpoint_explicit = bool(re.search(r"/admin/api/remote-access\.php$", raw, flags=re.I))
+    if endpoint_explicit:
+        raw = re.sub(r"/admin/api/remote-access\.php$", "", raw, flags=re.I).rstrip("/")
+    elif re.search(r"/developer-api\.php$", raw, flags=re.I):
+        raw = re.sub(r"/developer-api\.php$", "", raw, flags=re.I).rstrip("/")
+
+    match = re.match(r"^(https?://[^/]+)(/.*)?$", raw, flags=re.I)
+    if not match:
+        return DEFAULT_SECURITY_CENTER_BASE_URL.rstrip("/")
+
+    origin = match.group(1).rstrip("/")
+    path = (match.group(2) or "").rstrip("/")
+    lower_path = path.lower()
+    marker = "/security-center"
+
+    if endpoint_explicit:
+        normalized_path = path
+    elif marker in lower_path:
+        idx = lower_path.index(marker)
+        normalized_path = path[:idx + len(marker)]
+    else:
+        normalized_path = (path + marker) if path else marker
+
+    return (origin + normalized_path).rstrip("/")
 
 
 def api_url_from_base(base_url: str) -> str:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.error
@@ -71,11 +74,11 @@ class SecurityCenterClient:
         self.timeout = int(cfg.get("timeout", timeout) or timeout)
         self.last_debug: Dict[str, Any] = {}
 
-    def _headers(self, json_body: bool = False) -> Dict[str, str]:
+    def _base_headers(self, json_body: bool = False) -> Dict[str, str]:
         headers = {
             "Accept": "application/json, text/plain;q=0.9, */*;q=0.5",
             "X-MEDPOV-API-Key": self.api_key,
-            "User-Agent": "MEDPOV-Friday/SecurityCenterClient/2.8.10",
+            "User-Agent": "MEDPOV-Friday/SecurityCenterClient/2.8.15",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
         }
@@ -85,6 +88,33 @@ class SecurityCenterClient:
             headers["Content-Type"] = "application/json; charset=utf-8"
         return headers
 
+    def _signed_headers(self, method: str, url: str, body: bytes = b"", json_body: bool = False) -> Dict[str, str]:
+        headers = self._base_headers(json_body=json_body)
+        # Remote API HMAC is optional on the server. Sending these headers is harmless
+        # when require_hmac=false and keeps FRIDAY compatible when it is enabled later.
+        if self.api_key:
+            timestamp = str(int(time.time()))
+            nonce = secrets.token_urlsafe(18)[:24]
+            parsed = urllib.parse.urlsplit(url)
+            request_uri = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+            canonical = "\n".join([
+                method.upper(),
+                request_uri,
+                timestamp,
+                nonce,
+                hashlib.sha256(body or b"").hexdigest(),
+            ])
+            signature = hmac.new(self.api_key.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+            headers["X-MEDPOV-Timestamp"] = timestamp
+            headers["X-MEDPOV-Nonce"] = nonce
+            headers["X-MEDPOV-Signature"] = "sha256=" + signature
+        return headers
+
+    def _headers(self, json_body: bool = False) -> Dict[str, str]:
+        # Backward-compatible helper for older imports/tests. Runtime requests use
+        # _signed_headers() so optional HMAC mode works too.
+        return self._base_headers(json_body=json_body)
+
     def _build_request(self, action: str, method: str, payload: Dict[str, Any]) -> Tuple[urllib.request.Request, str]:
         method = (method or "GET").upper().strip()
         clean_payload = {k: v for k, v in payload.items() if v is not None and v != ""}
@@ -93,18 +123,19 @@ class SecurityCenterClient:
 
         if method == "POST":
             body = json.dumps(clean_payload, ensure_ascii=False).encode("utf-8")
+            url = self.api_url
             req = urllib.request.Request(
-                self.api_url,
+                url,
                 data=body,
-                headers=self._headers(json_body=True),
+                headers=self._signed_headers("POST", url, body=body, json_body=True),
                 method="POST",
             )
-            return req, self.api_url
+            return req, url
 
         query = urllib.parse.urlencode(clean_payload, doseq=True)
         sep = "&" if "?" in self.api_url else "?"
         url = self.api_url + sep + query
-        req = urllib.request.Request(url, headers=self._headers(json_body=False), method="GET")
+        req = urllib.request.Request(url, headers=self._signed_headers("GET", url, body=b"", json_body=False), method="GET")
         return req, url
 
     def _parse_response(
